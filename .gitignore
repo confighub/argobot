@@ -1,0 +1,6 @@
+# Built binary (do not commit executables)
+/argobot
+*.exe
+
+# Local env
+.env

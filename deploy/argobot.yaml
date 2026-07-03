@@ -1,0 +1,54 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+#
+# argobot deployment, intended to be stored and managed as a ConfigHub Unit and
+# applied to the cluster that runs Argo CD. Non-secret settings live in the
+# ConfigMap below; secrets (worker secret, Argo CD token) come from the
+# argobot-secrets Secret, which is created out of band (see README).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argobot-config
+  namespace: argobot
+data:
+  CONFIGHUB_URL: "https://hub.confighub.com"
+  ARGOCD_SERVER: "https://argocd.example.com"
+  ARGOCD_INSECURE: "false"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argobot
+  namespace: argobot
+  labels:
+    app: argobot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: argobot
+  template:
+    metadata:
+      labels:
+        app: argobot
+    spec:
+      containers:
+        - name: argobot
+          image: ghcr.io/confighub/argobot:latest
+          envFrom:
+            - configMapRef:
+                name: argobot-config
+            - secretRef:
+                name: argobot-secrets # CONFIGHUB_WORKER_ID, CONFIGHUB_WORKER_SECRET, ARGOCD_AUTH_TOKEN
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
