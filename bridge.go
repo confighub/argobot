@@ -18,8 +18,28 @@ import (
 // worker; applying a Unit on such a Target force-syncs the Argo CD Application.
 const ProviderArgo = api.ProviderType("Argo")
 
-// ArgoBridge force-syncs an Argo CD Application on apply. It routes by no
-// toolchain (ToolchainAny) because it operates on the Target, not on Unit data.
+// argoToolchains lists every toolchain argobot registers for under ProviderArgo.
+// argobot is toolchain-agnostic — it force-syncs an Argo CD Application and
+// ignores Unit data — but the client-side dispatcher matches a Unit's concrete
+// toolchain exactly and does not treat ToolchainAny as a wildcard. So we
+// register under Any (for Target/server advertisement) and every concrete
+// toolchain, so applying a Unit of any config format on an Argo Target
+// dispatches here.
+var argoToolchains = []workerapi.ToolchainType{
+	workerapi.ToolchainAny,
+	workerapi.ToolchainKubernetesYAML,
+	workerapi.ToolchainConfigHubYAML,
+	workerapi.ToolchainAppConfigProperties,
+	workerapi.ToolchainAppConfigYAML,
+	workerapi.ToolchainAppConfigTOML,
+	workerapi.ToolchainAppConfigINI,
+	workerapi.ToolchainAppConfigJSON,
+	workerapi.ToolchainAppConfigEnv,
+	workerapi.ToolchainAppConfigText,
+}
+
+// ArgoBridge force-syncs an Argo CD Application on apply. It operates on the
+// Target (BridgeHandle / Unit slug), not on Unit data.
 type ArgoBridge struct {
 	argo *argo.Client
 }
@@ -32,46 +52,47 @@ func NewArgoBridge(client *argo.Client) *ArgoBridge {
 func (b *ArgoBridge) ID() api.BridgeWorkerID {
 	return api.BridgeWorkerID{
 		ProviderType:   ProviderArgo,
-		ToolchainTypes: []workerapi.ToolchainType{workerapi.ToolchainAny},
+		ToolchainTypes: argoToolchains,
 	}
 }
 
 func (b *ArgoBridge) Info(_ api.InfoOptions) api.BridgeWorkerInfo {
-	return api.BridgeWorkerInfo{
-		SupportedConfigTypes: []*api.SupportedConfigType{
-			{
-				ConfigTypeSignature: api.ConfigTypeSignature{
-					ConfigType: api.ConfigType{
-						ProviderType:  ProviderArgo,
-						ToolchainType: workerapi.ToolchainAny,
-					},
-					Options: []api.BridgeOption{
-						{
-							Name:        "AppNamespace",
-							Description: "Namespace of the Argo CD Application, for apps-in-any-namespace. Optional.",
-							Required:    false,
-							DataType:    funcapi.DataTypeString,
-							Example:     "argocd",
-						},
-						{
-							Name:        "Prune",
-							Description: "Prune resources during sync (true/false). Defaults to false.",
-							Required:    false,
-							DataType:    funcapi.DataTypeString,
-							Example:     "false",
-						},
-						{
-							Name:        "Force",
-							Description: "Force sync using the apply force strategy (true/false). Defaults to true.",
-							Required:    false,
-							DataType:    funcapi.DataTypeString,
-							Example:     "true",
-						},
-					},
-				},
-			},
+	options := []api.BridgeOption{
+		{
+			Name:        "AppNamespace",
+			Description: "Namespace of the Argo CD Application, for apps-in-any-namespace. Optional.",
+			Required:    false,
+			DataType:    funcapi.DataTypeString,
+			Example:     "argocd",
+		},
+		{
+			Name:        "Prune",
+			Description: "Prune resources during sync (true/false). Defaults to false.",
+			Required:    false,
+			DataType:    funcapi.DataTypeString,
+			Example:     "false",
+		},
+		{
+			Name:        "Force",
+			Description: "Force sync using the apply force strategy (true/false). Defaults to true.",
+			Required:    false,
+			DataType:    funcapi.DataTypeString,
+			Example:     "true",
 		},
 	}
+	configTypes := make([]*api.SupportedConfigType, 0, len(argoToolchains))
+	for _, tc := range argoToolchains {
+		configTypes = append(configTypes, &api.SupportedConfigType{
+			ConfigTypeSignature: api.ConfigTypeSignature{
+				ConfigType: api.ConfigType{
+					ProviderType:  ProviderArgo,
+					ToolchainType: tc,
+				},
+				Options: options,
+			},
+		})
+	}
+	return api.BridgeWorkerInfo{SupportedConfigTypes: configTypes}
 }
 
 // Apply force-syncs the Argo CD Application identified by the Target's
