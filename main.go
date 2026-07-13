@@ -38,16 +38,22 @@ func main() {
 		ConfigHubURL:     cfg.ConfigHubURL,
 		BridgeDispatcher: &dispatcher,
 		// Hardcoded to HTTP long-polling: argobot talks to the main API port and
-		// does not need the separate h2c worker port. Later, when ConfigHub grows
-		// an event-subscription channel, argobot will react to apply events over
-		// this same transport instead of being invoked as a bridge Apply.
+		// does not need the separate h2c worker port. Event delivery rides this
+		// same long-poll connection.
 		Transport: worker.TransportLongPoll,
+		// The primary trigger: argobot subscribes to ConfigHub apply/release
+		// facts and force-syncs Argo in reaction, rather than being invoked as a
+		// bridge Apply. The bridge above stays registered so argobot remains a
+		// valid worker and the imperative Apply path keeps working.
+		EventSubscriptions: eventSubscriptions(cfg),
+		EventHandler:       makeEventHandler(argoClient, cfg),
 	})
 	if err != nil {
 		log.Fatalf("[FATAL] failed to create connector: %v", err)
 	}
 
-	log.Printf("[INFO] argobot starting; connecting to %s via long-poll", cfg.ConfigHubURL)
+	log.Printf("[INFO] argobot starting; connecting to %s via long-poll (subscription %q, space=%q target=%q)",
+		cfg.ConfigHubURL, cfg.SubscriptionName, cfg.EventSpaceID, cfg.EventTargetID)
 	if err := connector.Start(); err != nil {
 		log.Fatalf("[FATAL] connector stopped: %v", err)
 	}

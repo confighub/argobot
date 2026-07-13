@@ -14,6 +14,14 @@ data:
   CONFIGHUB_URL: "https://hub.confighub.com"
   ARGOCD_SERVER: "https://argocd.example.com"
   ARGOCD_INSECURE: "false"
+  # The Argo CD Application every matching event force-syncs. Set this, or scope
+  # by Space/Target below and let a release resolve its Application by slug.
+  ARGO_APP: "my-app"
+  # Optional event-subscription scope; empty means every Space / every Target.
+  # CONFIGHUB_EVENT_SPACE_ID: ""
+  # CONFIGHUB_EVENT_TARGET_ID: ""
+  # Subscription name keys the server-held delivery cursor; keep it stable.
+  # CONFIGHUB_SUBSCRIPTION_NAME: "argobot"
 ---
 apiVersion: apps/v1
 kind: Deployment

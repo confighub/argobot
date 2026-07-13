@@ -1,0 +1,85 @@
+// Copyright (C) ConfigHub, Inc.
+// SPDX-License-Identifier: MIT
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+
+	"github.com/confighub/argobot/argo"
+	"github.com/confighub/sdk/core/worker/api"
+)
+
+// Event types argobot reacts to. ConfigHub's event vocabulary is open-ended and
+// owned by the server, so — like the API spec and the SDK — argobot names the
+// ones it cares about itself rather than relying on shared constants.
+const (
+	eventTypeApplyCompleted   = "apply.completed"
+	eventTypeReleasePublished = "release.published"
+)
+
+// eventSubscriptions builds the event-log subscriptions argobot declares to
+// ConfigHub: apply and release facts, optionally narrowed to one Space or
+// Target. The subscription name keys argobot's server-stored delivery cursor, so
+// a restart resumes where it left off.
+func eventSubscriptions(cfg config) []api.EventSubscription {
+	return []api.EventSubscription{{
+		Name: cfg.SubscriptionName,
+		EventTypes: []string{
+			eventTypeApplyCompleted,
+			eventTypeReleasePublished,
+		},
+		SpaceID:  cfg.EventSpaceID,
+		TargetID: cfg.EventTargetID,
+	}}
+}
+
+// makeEventHandler returns the callback ConfigHub invokes for each delivered
+// fact. argobot reacts by force-syncing the corresponding Argo CD Application —
+// a reaction, not a command it was told to run. A fact it cannot map to an
+// Application is logged and skipped.
+func makeEventHandler(argoClient *argo.Client, cfg config) func(context.Context, api.EventLogEntry) {
+	return func(ctx context.Context, entry api.EventLogEntry) {
+		appName := resolveAppName(cfg, entry)
+		if appName == "" {
+			log.Printf("[WARN] argobot: %s (space=%s target=%s cursor=%d) — no Argo app resolved; set ARGO_APP or publish a Release. Skipping.",
+				entry.EventType, entry.SpaceID, entry.TargetID, entry.CursorID)
+			return
+		}
+
+		log.Printf("[INFO] argobot: %s (space=%s target=%s cursor=%d) → force-syncing Argo app %q",
+			entry.EventType, entry.SpaceID, entry.TargetID, entry.CursorID, appName)
+
+		if err := argoClient.Sync(ctx, appName, argo.SyncOptions{
+			AppNamespace: cfg.ArgoAppNamespace,
+			Prune:        cfg.ArgoPrune,
+			Force:        cfg.ArgoForce,
+		}); err != nil {
+			log.Printf("[ERROR] argobot: force-sync of %q failed: %v", appName, err)
+			return
+		}
+		log.Printf("[INFO] argobot: force-sync of %q triggered", appName)
+	}
+}
+
+// resolveAppName maps a delivered event to the Argo CD Application to sync.
+// ArgoApp, when set, is the single Application every event targets. Otherwise a
+// release carries its Space slug as BundleBaseName, which by the app-name ==
+// space-slug convention is the Application. An event that resolves to neither is
+// left unhandled.
+func resolveAppName(cfg config, entry api.EventLogEntry) string {
+	if cfg.ArgoApp != "" {
+		return cfg.ArgoApp
+	}
+	if entry.EventType == eventTypeReleasePublished {
+		var payload struct {
+			BundleBaseName string
+		}
+		if err := json.Unmarshal(entry.Payload, &payload); err == nil {
+			return payload.BundleBaseName
+		}
+	}
+	return ""
+}
