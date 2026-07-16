@@ -20,12 +20,12 @@ const (
 	eventTypeReleasePublished = "release.published"
 )
 
-// eventSubscriptions builds the event-log subscriptions argobot declares to
-// ConfigHub: apply and release facts, optionally narrowed to one Space or
-// Target. The subscription name keys argobot's server-stored delivery cursor, so
-// a restart resumes where it left off.
-func eventSubscriptions(cfg config) []api.EventSubscription {
-	return []api.EventSubscription{{
+// eventSubscription builds the event-log subscription argobot consumes: apply
+// and release facts, optionally narrowed to one Space or Target. Its Name is the
+// cursor name (in the request path), which keys argobot's server-stored delivery
+// cursor, so a restart resumes where it left off.
+func eventSubscription(cfg config) api.EventSubscription {
+	return api.EventSubscription{
 		Name: cfg.SubscriptionName,
 		EventTypes: []string{
 			eventTypeApplyCompleted,
@@ -33,7 +33,7 @@ func eventSubscriptions(cfg config) []api.EventSubscription {
 		},
 		SpaceID:  cfg.EventSpaceID,
 		TargetID: cfg.EventTargetID,
-	}}
+	}
 }
 
 // makeEventHandler returns the callback ConfigHub invokes for each delivered
