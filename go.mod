@@ -2,7 +2,7 @@ module github.com/confighub/argobot
 
 go 1.25.0
 
-require github.com/confighub/sdk/core v0.1.90
+require github.com/confighub/sdk/core v0.1.95
 
 require (
 	cel.dev/expr v0.24.0 // indirect
@@ -85,10 +85,3 @@ require (
 	sigs.k8s.io/kustomize/kyaml v0.18.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
-
-// LOCAL-ONLY. The event-consumer SDK API (NewEventConsumer /
-// EventConsumer.Run) is not yet in a published github.com/confighub/sdk/core
-// release, so it is resolved from the sibling working copy. Docker and CI
-// builds cannot see this path. Before merging/deploying: publish public/core
-// past v0.1.90, bump the require above to that version, and delete this replace.
-replace github.com/confighub/sdk/core => ../confighub/public/core
