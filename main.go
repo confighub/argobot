@@ -3,15 +3,21 @@
 
 // Command argobot is a ConfigHub bot that force-syncs Argo CD applications.
 //
-// It connects to ConfigHub over the HTTP long-poll worker protocol, registers an
-// "Argo" provider bridge, and force-syncs the corresponding Argo CD Application
-// whenever a Unit bound to an Argo target is applied. This makes an apply feel
-// like an immediate imperative deploy instead of waiting for Argo's next
-// reconciliation.
+// It is an event-log consumer: it authenticates to ConfigHub with a worker
+// identity and long-polls the event log, force-syncing the corresponding Argo CD
+// Application whenever ConfigHub records an apply or a release. This makes a
+// deploy feel immediate instead of waiting for Argo's next reconciliation.
+//
+// argobot is a pure consumer — it holds no lease and dequeues no operations, so
+// it never contends with any Target's work. Its reaction (force-sync) is its
+// own; the event only says the desired state for a (space, target) changed.
 package main
 
 import (
+	"context"
 	"log"
+	"os/signal"
+	"syscall"
 
 	"github.com/confighub/argobot/argo"
 	"github.com/confighub/sdk/core/worker"
@@ -29,26 +35,21 @@ func main() {
 		Insecure: cfg.ArgoInsecure,
 	})
 
-	dispatcher := worker.NewBridgeDispatcher()
-	dispatcher.RegisterBridge(NewArgoBridge(argoClient))
+	consumer := worker.NewEventConsumer(
+		cfg.ConfigHubURL,
+		cfg.WorkerID,
+		cfg.WorkerSecret,
+		eventSubscription(cfg),
+		makeEventHandler(argoClient, cfg),
+	)
 
-	connector, err := worker.NewConnector(worker.ConnectorOptions{
-		WorkerID:         cfg.WorkerID,
-		WorkerSecret:     cfg.WorkerSecret,
-		ConfigHubURL:     cfg.ConfigHubURL,
-		BridgeDispatcher: &dispatcher,
-		// Hardcoded to HTTP long-polling: argobot talks to the main API port and
-		// does not need the separate h2c worker port. Later, when ConfigHub grows
-		// an event-subscription channel, argobot will react to apply events over
-		// this same transport instead of being invoked as a bridge Apply.
-		Transport: worker.TransportLongPoll,
-	})
-	if err != nil {
-		log.Fatalf("[FATAL] failed to create connector: %v", err)
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	log.Printf("[INFO] argobot starting; connecting to %s via long-poll", cfg.ConfigHubURL)
-	if err := connector.Start(); err != nil {
-		log.Fatalf("[FATAL] connector stopped: %v", err)
+	log.Printf("[INFO] argobot starting; consuming events from %s (subscription %q, space=%q target=%q)",
+		cfg.ConfigHubURL, cfg.SubscriptionName, cfg.EventSpaceID, cfg.EventTargetID)
+	if err := consumer.Run(ctx); err != nil && ctx.Err() == nil {
+		log.Fatalf("[FATAL] event consumer stopped: %v", err)
 	}
+	log.Printf("[INFO] argobot shutting down")
 }

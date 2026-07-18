@@ -2,25 +2,28 @@
 
 A ConfigHub bot that force-syncs Argo CD applications.
 
-argobot connects to ConfigHub over the HTTP long-poll worker protocol, registers an `Argo` provider bridge, and force-syncs the corresponding Argo CD Application whenever a Unit bound to an Argo target is applied. The effect is that an apply feels like an immediate imperative deploy instead of waiting for Argo's next reconciliation.
+argobot connects to ConfigHub over the HTTP long-poll protocol and subscribes to ConfigHub's event log. When ConfigHub records that a deploy happened — a Unit apply completed, or a Release was published — argobot force-syncs the corresponding Argo CD Application, so the change takes effect immediately instead of waiting for Argo's next reconciliation.
 
-This is the first "bot" built on ConfigHub's surviving server→client command/event delivery protocol. See the design in `confighub/docs/design/bots.md`.
+This is the first "bot" implementation that takes a different approach than the original Bridge design. We expect to replace all bridge functionality with this kind of bot mechanism.
 
 ## How it works
 
-argobot is a worker with a single custom bridge:
+argobot connects as a ConfigHub worker and reacts to events over the long-poll connection:
 
-- It advertises the `Argo` provider type with toolchain `Any` — it operates on the Target, not on Unit data, so it does not route by config format.
-- On `Apply`, it reads the target's `BridgeHandle` as the Argo CD Application name (falling back to the Unit slug) plus the `AppNamespace`, `Prune`, and `Force` options, and calls the Argo CD REST API to sync. It reports `ApplyCompleted` or `ApplyFailed` back to ConfigHub, so the sync's synchronous success or failure surfaces on the Unit.
-- Argo CD credentials are argobot's own authority, supplied by environment, never brokered through ConfigHub. Which Application to sync comes from the applied Unit/Target.
+- It subscribes to the `apply.completed` and `release.published` event types, optionally scoped to a single Space or Target. The subscription is declared when argobot connects.
+- On a delivered event it resolves which Argo CD Application to sync (see below) and hard-refreshes it via the Argo CD REST API. For an OCI source this forces a tag→digest re-resolve rather than a plain sync, or Argo would replay the cached digest and miss the freshly published bundle. The reaction is argobot's own; the event only says the desired state for a (Space, Target) changed.
+- Argo CD credentials are argobot's own authority, supplied by environment, never brokered through ConfigHub.
+- The delivery cursor is held by ConfigHub, keyed by the worker and the subscription name, so a restart resumes where it left off without argobot keeping any local state.
 
-Force sync is on by default (this is a force-sync bot); set the `Force` option to `false` on a target to disable the apply force strategy.
+Resolving the Application. When `ARGO_APP` is set, it is the single Application every matching event force-syncs — the simplest deployment. When it is not set, a `release.published` event carries its Space slug, which by the app-name == space-slug convention names the Application; an `apply.completed` event without `ARGO_APP` cannot be resolved and is skipped with a warning.
 
 Correctness belongs to Argo CD: it reconciles from its source regardless, so a missed or failed sync only loses immediacy, not correctness.
 
-### Trigger model, and where this is going
+### Trigger model
 
-The connector today exposes the bridge interface (`Apply`/`Refresh`/…) as its only trigger surface, so a force-sync is driven by applying a Unit on an Argo target. When ConfigHub grows an event-subscription channel, argobot will instead react to apply-completed events over this same long-poll transport — force-syncing automatically after an OCI apply, with no separate apply. The reporting direction (argobot pushing Argo/Kubernetes health back into ConfigHub) is also future work.
+The event subscription is the primary trigger. A bridge (`Argo` provider) also stays registered, so the imperative path still works: applying a Unit bound to an Argo target force-syncs it directly, reading the target's `BridgeHandle` as the Application name plus the `AppNamespace` / `Prune` / `Force` options. That path is the secondary, human-driven trigger; the event subscription is what makes a deploy take effect on its own.
+
+The reporting direction — argobot pushing Argo / Kubernetes health back into ConfigHub over the REST API — is the next step and not yet built.
 
 ## Configuration
 
@@ -34,10 +37,17 @@ All configuration is via environment variables:
 | `ARGOCD_SERVER` | yes | Argo CD API base URL, e.g. `https://argocd.example.com` |
 | `ARGOCD_AUTH_TOKEN` | yes | Argo CD API bearer token |
 | `ARGOCD_INSECURE` | no | `true` to skip TLS verification (self-signed Argo CD) |
+| `CONFIGHUB_SUBSCRIPTION_NAME` | no | Subscription name; keys the server-held delivery cursor, so it must be stable across restarts. Defaults to `argobot`. |
+| `CONFIGHUB_EVENT_SPACE_ID` | no | Scope delivery to one Space (UUID). Empty means every Space. |
+| `CONFIGHUB_EVENT_TARGET_ID` | no | Scope delivery to one Target (UUID). Empty means every Target. |
+| `ARGO_APP` | no | The single Argo CD Application every matching event force-syncs. If unset, the Application is resolved from the event (a release carries its Space slug). |
+| `ARGO_APP_NAMESPACE` | no | Argo CD Application namespace passed to the sync request. |
+| `ARGO_PRUNE` | no | `true` to prune on sync. |
+| `ARGO_FORCE` | no | `true` to use Argo's force strategy on sync. |
 
 ## Setup
 
-Build the CLI (`bin/cub`) from the ConfigHub repo, then:
+Install the `cub` CLI (see [docs.confighub.com](https://docs.confighub.com)), then:
 
 ```sh
 # 1. Create the worker (bot identity) in the space that owns the Argo targets.
@@ -45,23 +55,23 @@ cub worker create argobot --space my-space
 
 # 2. Read its ID and secret for argobot's environment.
 cub worker get argobot --space my-space
-
-# 3. Create an Argo target bound to that worker. The BridgeHandle is the Argo CD
-#    Application name; options carry namespace / prune / force.
-cub target create my-app-argo \
-  --space my-space \
-  --worker argobot \
-  --provider Argo \
-  --bridge-handle my-app \
-  --option AppNamespace=argocd \
-  --option Force=true
-
-# 4. Bind a Unit to the target and apply it to trigger a force-sync.
-cub unit set-target my-app-argo --unit my-app --space my-space
-cub unit apply my-app --space my-space
 ```
 
-(Exact `cub` flags may vary by CLI version; `cub target create --help`.)
+Then run argobot with the worker credentials and its Argo CD credentials, pointing it at the Application to sync:
+
+```sh
+CONFIGHUB_URL=https://hub.confighub.com \
+CONFIGHUB_WORKER_ID=... CONFIGHUB_WORKER_SECRET=... \
+ARGOCD_SERVER=https://argocd.example.com ARGOCD_AUTH_TOKEN=... \
+ARGO_APP=my-app \
+argobot
+```
+
+A `cub unit apply` or a `cub release` for the scoped (Space, Target) now emits an event that argobot receives and force-syncs on. To limit which deploys argobot reacts to, set `CONFIGHUB_EVENT_SPACE_ID` or `CONFIGHUB_EVENT_TARGET_ID`.
+
+The imperative path also remains: create an `Argo` target bound to the worker (its `BridgeHandle` is the Application name) and apply a Unit on it to force-sync directly, without an event subscription.
+
+(Exact `cub` flags may vary by CLI version; `cub --help`.)
 
 ## Deploy
 

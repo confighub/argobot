@@ -2,7 +2,7 @@ module github.com/confighub/argobot
 
 go 1.25.0
 
-require github.com/confighub/sdk/core v0.1.90
+require github.com/confighub/sdk/core v0.1.95
 
 require (
 	cel.dev/expr v0.24.0 // indirect
