@@ -44,7 +44,7 @@ func makeEventHandler(argoClient *argo.Client, cfg config) func(context.Context,
 	return func(ctx context.Context, entry api.EventLogEntry) {
 		appName := resolveAppName(cfg, entry)
 		if appName == "" {
-			log.Printf("[WARN] argobot: %s (space=%s target=%s cursor=%d) — no Argo app resolved; set ARGO_APP or publish a Release. Skipping.",
+			log.Printf("[WARN] argobot: %s (space=%s target=%s cursor=%d) — no Argo app resolved; skipping.",
 				entry.EventType, entry.SpaceID, entry.TargetID, entry.CursorID)
 			return
 		}
@@ -65,21 +65,21 @@ func makeEventHandler(argoClient *argo.Client, cfg config) func(context.Context,
 }
 
 // resolveAppName maps a delivered event to the Argo CD Application to sync.
-// ArgoApp, when set, is the single Application every event targets. Otherwise a
-// release carries its Space slug as BundleBaseName, which by the app-name ==
-// space-slug convention is the Application. An event that resolves to neither is
-// left unhandled.
+// ArgoApp, when set, is the single Application every event targets. Otherwise the
+// event payload's SpaceSlug — the slug of the Space the fact is about — names the
+// Application, by the app-name == space-slug convention. Both apply.completed and
+// release.published carry SpaceSlug. (The payload's BundleBaseName is the Release
+// bundle's filename, which defaults to the Space ID, so it must not be used as
+// the app name.) An event that resolves to neither is left unhandled.
 func resolveAppName(cfg config, entry api.EventLogEntry) string {
 	if cfg.ArgoApp != "" {
 		return cfg.ArgoApp
 	}
-	if entry.EventType == eventTypeReleasePublished {
-		var payload struct {
-			BundleBaseName string
-		}
-		if err := json.Unmarshal(entry.Payload, &payload); err == nil {
-			return payload.BundleBaseName
-		}
+	var payload struct {
+		SpaceSlug string
+	}
+	if err := json.Unmarshal(entry.Payload, &payload); err == nil {
+		return payload.SpaceSlug
 	}
 	return ""
 }
