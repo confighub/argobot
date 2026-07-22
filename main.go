@@ -20,6 +20,7 @@ import (
 	"syscall"
 
 	"github.com/confighub/sdk/core/worker"
+	"golang.org/x/sync/errgroup"
 )
 
 func main() {
@@ -33,20 +34,39 @@ func main() {
 		log.Fatalf("[FATAL] %v", err)
 	}
 
-	consumer := worker.NewEventConsumer(
-		cfg.ConfigHubURL,
-		cfg.WorkerID,
-		cfg.WorkerSecret,
-		eventSubscription(cfg),
-		makeEventHandler(syncer, cfg),
-	)
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log.Printf("[INFO] argobot starting; consuming events from %s (subscription %q, space=%q target=%q)",
-		cfg.ConfigHubURL, cfg.SubscriptionName, cfg.EventSpaceID, cfg.EventTargetID)
-	if err := consumer.Run(ctx); err != nil && ctx.Err() == nil {
+	// Scope delivery to the worker's own Targets unless CONFIGHUB_EVENT_TARGET_ID
+	// overrides. Discovery uses the same worker credentials as the event consumer.
+	var discovered []string
+	if cfg.EventTargetID == "" {
+		discovered, err = discoverWorkerTargets(ctx, cfg)
+		if err != nil {
+			log.Fatalf("[FATAL] discovering worker targets: %v", err)
+		}
+		if len(discovered) == 0 {
+			log.Printf("[WARN] argobot: worker is the bridge for no Targets; subscribing to every Target. " +
+				"Set CONFIGHUB_EVENT_TARGET_ID to scope explicitly.")
+		}
+	}
+	subs := subscriptionsForTargets(cfg, discovered)
+
+	handler := makeEventHandler(syncer, cfg)
+	log.Printf("[INFO] argobot starting; consuming events from %s (subscription %q, space=%q, %d subscription(s))",
+		cfg.ConfigHubURL, cfg.SubscriptionName, cfg.EventSpaceID, len(subs))
+	for _, sub := range subs {
+		log.Printf("[INFO] argobot: subscription %q scoped to target=%q", sub.Name, sub.TargetID)
+	}
+
+	// One consumer per subscription; each holds its own long-poll connection and
+	// cursor. If any stops with an error, cancel the rest and exit.
+	g, gctx := errgroup.WithContext(ctx)
+	for _, sub := range subs {
+		consumer := worker.NewEventConsumer(cfg.ConfigHubURL, cfg.WorkerID, cfg.WorkerSecret, sub, handler)
+		g.Go(func() error { return consumer.Run(gctx) })
+	}
+	if err := g.Wait(); err != nil && ctx.Err() == nil {
 		log.Fatalf("[FATAL] event consumer stopped: %v", err)
 	}
 	log.Printf("[INFO] argobot shutting down")

@@ -3,10 +3,12 @@
 
 name: build
 
+# Development image builds for branches and PRs. Tagged releases (semver image +
+# config bundle) are handled by release.yml, so this workflow does not run on
+# tags and never produces a semver or :latest image.
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
 
 permissions:
@@ -48,7 +50,6 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=semver,pattern={{version}}
             type=sha
 
       - name: Build and push image
