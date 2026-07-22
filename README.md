@@ -10,7 +10,7 @@ This is the first "bot" implementation that takes a different approach than the 
 
 argobot connects as a ConfigHub worker and reacts to events over the long-poll connection:
 
-- It subscribes to the `apply.completed` and `release.published` event types, optionally scoped to a single Space or Target. The subscription is declared when argobot connects.
+- It subscribes to the `apply.completed` and `release.published` event types. By default it scopes delivery to the Targets its own worker is the bridge for — on startup it asks ConfigHub which Targets name its worker and subscribes to each — so a bot reacts only to its own deploys without being told the Target IDs. `CONFIGHUB_EVENT_TARGET_ID` overrides this with a single explicit Target, and `CONFIGHUB_EVENT_SPACE_ID` further narrows delivery to one Space. The subscription is declared when argobot connects.
 - On a delivered event it resolves which Argo CD Application to sync (see below) and triggers a sync. The reaction is argobot's own; the event only says the desired state for a (Space, Target) changed.
 - The delivery cursor is held by ConfigHub, keyed by the worker and the subscription name, so a restart resumes where it left off without argobot keeping any local state.
 
@@ -44,7 +44,7 @@ All configuration is via environment variables:
 | `ARGOCD_INSECURE` | no | _argocd mode._ `true` to skip TLS verification (self-signed Argo CD) |
 | `CONFIGHUB_SUBSCRIPTION_NAME` | no | Subscription name; keys the server-held delivery cursor, so it must be stable across restarts. Defaults to `argobot`. |
 | `CONFIGHUB_EVENT_SPACE_ID` | no | Scope delivery to one Space (UUID). Empty means every Space. |
-| `CONFIGHUB_EVENT_TARGET_ID` | no | Scope delivery to one Target (UUID). Empty means every Target. |
+| `CONFIGHUB_EVENT_TARGET_ID` | no | Override the Target scope with one Target (UUID). Empty (default) auto-scopes to the Targets the worker is the bridge for. |
 | `ARGO_APP` | no | The single Argo CD Application every matching event syncs. If unset, the Application is resolved from the event (a release carries its Space slug). |
 | `ARGO_APP_NAMESPACE` | no | _argocd mode._ Argo CD Application namespace passed to the REST sync request (apps-in-any-namespace). |
 | `ARGO_PRUNE` | no | _argocd mode._ `true` to prune on sync. |
@@ -85,7 +85,7 @@ ARGO_APP=my-app \
 argobot
 ```
 
-A `cub unit apply` or a `cub release` for the scoped (Space, Target) now emits an event that argobot receives and syncs on. To limit which deploys argobot reacts to, set `CONFIGHUB_EVENT_SPACE_ID` or `CONFIGHUB_EVENT_TARGET_ID`.
+A `cub unit apply` or a `cub release` for the scoped (Space, Target) now emits an event that argobot receives and syncs on. By default argobot reacts only to deploys on the Targets its worker is the bridge for (discovered at startup). Set `CONFIGHUB_EVENT_TARGET_ID` to override that with a single Target, or `CONFIGHUB_EVENT_SPACE_ID` to further narrow to one Space.
 
 (Exact `cub` flags may vary by CLI version; `cub --help`.)
 
@@ -97,18 +97,21 @@ The Role/RoleBinding are in the Argo CD namespace (`argocd` by default), where t
 
 ### Config bundle
 
-`.github/workflows/publish-config-bundle.yml` packages `manifests/` into an OCI bundle on pushes to `main`, pushing it to `ghcr.io/confighub/configs/argobot`. Load it into ConfigHub as a component base:
+`.github/workflows/release.yml` packages `manifests/` into an OCI bundle and pushes it to `ghcr.io/confighub/configs/argobot:latest`. The bundle **floats** — a single moving `:latest` — but each cut pins a concrete released image: the committed manifest carries `argobot:latest`, and the workflow substitutes it with the current released version (resolved from git tags) before publishing, failing the build if the pin does not take. Load it into ConfigHub as a component base:
 
 ```sh
 cub variant upload --component argobot --variant base --granularity per-file \
   oci://ghcr.io/confighub/configs/argobot
 ```
 
-## Build
+## Build and release
 
 ```sh
 go build ./...        # compile
 docker build -t ghcr.io/confighub/argobot:dev .
 ```
 
-CI (`.github/workflows/build.yml`) builds and pushes the image to `ghcr.io/confighub/argobot` on pushes to `main` and version tags.
+Two workflows, two cadences:
+
+- `.github/workflows/build.yml` builds and pushes **development** images to `ghcr.io/confighub/argobot` on pushes to `main` and on PRs (tags `main`, `pr-N`, `sha-…`). No semver, no `:latest`.
+- `.github/workflows/release.yml` cuts a **release** when you push a `vX.Y.Z` git tag: it builds the semver image (`:vX.Y.Z`, plus `:latest`) and republishes the config bundle pinned to it. The bundle is also republished on every `main` push, pinned to the current latest tag, so a config-only change ships without a new image. The pinned version is never committed, so there is no commit-to-release cycle.

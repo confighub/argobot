@@ -40,8 +40,10 @@ type config struct {
 	ArgoRefreshType string
 
 	// Event subscription scope. SubscriptionName keys argobot's server-stored
-	// delivery cursor and must be stable across restarts. SpaceID and TargetID
-	// are optional filters; empty means every Space / every Target.
+	// delivery cursor and must be stable across restarts. SpaceID is an optional
+	// filter; empty means every Space. TargetID is an override: when empty,
+	// argobot discovers the Targets its worker is the bridge for and subscribes
+	// to those; when set, it scopes to that single Target instead.
 	SubscriptionName string
 	EventSpaceID     string
 	EventTargetID    string

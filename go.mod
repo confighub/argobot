@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/confighub/sdk/core v0.1.96
+	golang.org/x/sync v0.21.0
 	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.35.0
 )

@@ -137,7 +137,9 @@ spec:
             # Keys the server-held delivery cursor; keep it stable across restarts.
             - name: CONFIGHUB_SUBSCRIPTION_NAME
               value: "argobot"
-            # Scope delivery to one Space / Target (UUID); absent = every one.
+            # By default argobot scopes to the Targets its worker is the bridge
+            # for (discovered at startup). CONFIGHUB_EVENT_TARGET_ID overrides
+            # that with one Target; CONFIGHUB_EVENT_SPACE_ID narrows to one Space.
             # - name: CONFIGHUB_EVENT_SPACE_ID
             #   value: ""
             # - name: CONFIGHUB_EVENT_TARGET_ID

@@ -19,19 +19,46 @@ const (
 	eventTypeReleasePublished = "release.published"
 )
 
-// eventSubscription builds the event-log subscription argobot consumes: apply
-// and release facts, optionally narrowed to one Space or Target. Its Name is the
-// cursor name (in the request path), which keys argobot's server-stored delivery
-// cursor, so a restart resumes where it left off.
-func eventSubscription(cfg config) api.EventSubscription {
-	return api.EventSubscription{
-		Name: cfg.SubscriptionName,
-		EventTypes: []string{
-			eventTypeApplyCompleted,
-			eventTypeReleasePublished,
-		},
-		SpaceID:  cfg.EventSpaceID,
-		TargetID: cfg.EventTargetID,
+// subscriptionsForTargets builds the event-log subscriptions argobot consumes:
+// apply and release facts, scoped to the Targets argobot reacts to. Each
+// subscription's Name is the cursor name that keys argobot's server-stored
+// delivery cursor, so a restart resumes where it left off.
+//
+// Scoping precedence:
+//   - EventTargetID set — an explicit override: a single subscription scoped to
+//     that one Target, and discoveredTargetIDs is ignored. Its Name is the plain
+//     SubscriptionName, preserving the cursor of a deployment that pinned a
+//     Target before auto-discovery existed.
+//   - discoveredTargetIDs non-empty — one subscription per Target the worker is
+//     the BridgeWorker for, so argobot reacts to exactly its own targets. Each
+//     Name is suffixed with the Target ID to give it an independent cursor.
+//   - neither — a single unscoped subscription (every Target). This is the
+//     fallback when a worker owns no Targets; argobot stays useful rather than
+//     going silent, at the cost of reacting org-wide.
+//
+// EventSpaceID, when set, further narrows every subscription (AND semantics).
+func subscriptionsForTargets(cfg config, discoveredTargetIDs []string) []api.EventSubscription {
+	eventTypes := []string{eventTypeApplyCompleted, eventTypeReleasePublished}
+	sub := func(name, targetID string) api.EventSubscription {
+		return api.EventSubscription{
+			Name:       name,
+			EventTypes: eventTypes,
+			SpaceID:    cfg.EventSpaceID,
+			TargetID:   targetID,
+		}
+	}
+
+	switch {
+	case cfg.EventTargetID != "":
+		return []api.EventSubscription{sub(cfg.SubscriptionName, cfg.EventTargetID)}
+	case len(discoveredTargetIDs) == 0:
+		return []api.EventSubscription{sub(cfg.SubscriptionName, "")}
+	default:
+		subs := make([]api.EventSubscription, 0, len(discoveredTargetIDs))
+		for _, id := range discoveredTargetIDs {
+			subs = append(subs, sub(cfg.SubscriptionName+"-"+id, id))
+		}
+		return subs
 	}
 }
 
