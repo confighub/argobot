@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/confighub/argobot/argo"
 	"github.com/confighub/sdk/core/worker/api"
 )
 
@@ -37,10 +36,10 @@ func eventSubscription(cfg config) api.EventSubscription {
 }
 
 // makeEventHandler returns the callback ConfigHub invokes for each delivered
-// fact. argobot reacts by force-syncing the corresponding Argo CD Application —
-// a reaction, not a command it was told to run. A fact it cannot map to an
+// fact. argobot reacts by syncing the corresponding Argo CD Application — a
+// reaction, not a command it was told to run. A fact it cannot map to an
 // Application is logged and skipped.
-func makeEventHandler(argoClient *argo.Client, cfg config) func(context.Context, api.EventLogEntry) {
+func makeEventHandler(syncer Syncer, cfg config) func(context.Context, api.EventLogEntry) {
 	return func(ctx context.Context, entry api.EventLogEntry) {
 		appName := resolveAppName(cfg, entry)
 		if appName == "" {
@@ -49,18 +48,14 @@ func makeEventHandler(argoClient *argo.Client, cfg config) func(context.Context,
 			return
 		}
 
-		log.Printf("[INFO] argobot: %s (space=%s target=%s cursor=%d) → force-syncing Argo app %q",
+		log.Printf("[INFO] argobot: %s (space=%s target=%s cursor=%d) → syncing Argo app %q",
 			entry.EventType, entry.SpaceID, entry.TargetID, entry.CursorID, appName)
 
-		if err := argoClient.Sync(ctx, appName, argo.SyncOptions{
-			AppNamespace: cfg.ArgoAppNamespace,
-			Prune:        cfg.ArgoPrune,
-			Force:        cfg.ArgoForce,
-		}); err != nil {
-			log.Printf("[ERROR] argobot: force-sync of %q failed: %v", appName, err)
+		if err := syncer.Sync(ctx, appName); err != nil {
+			log.Printf("[ERROR] argobot: sync of %q failed: %v", appName, err)
 			return
 		}
-		log.Printf("[INFO] argobot: force-sync of %q triggered", appName)
+		log.Printf("[INFO] argobot: sync of %q triggered", appName)
 	}
 }
 

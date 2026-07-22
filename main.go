@@ -19,7 +19,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/confighub/argobot/argo"
 	"github.com/confighub/sdk/core/worker"
 )
 
@@ -29,18 +28,17 @@ func main() {
 		log.Fatalf("[FATAL] %v", err)
 	}
 
-	argoClient := argo.NewClient(argo.ClientConfig{
-		Server:   cfg.ArgoServer,
-		Token:    cfg.ArgoToken,
-		Insecure: cfg.ArgoInsecure,
-	})
+	syncer, err := newSyncer(cfg)
+	if err != nil {
+		log.Fatalf("[FATAL] %v", err)
+	}
 
 	consumer := worker.NewEventConsumer(
 		cfg.ConfigHubURL,
 		cfg.WorkerID,
 		cfg.WorkerSecret,
 		eventSubscription(cfg),
-		makeEventHandler(argoClient, cfg),
+		makeEventHandler(syncer, cfg),
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

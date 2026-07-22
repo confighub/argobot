@@ -19,18 +19,31 @@ import (
 )
 
 // ClientConfig configures a Client. Server is the Argo CD API base URL
-// (e.g. https://argocd.example.com); Token is an Argo CD API bearer token.
+// (e.g. https://argocd.example.com); Token is an Argo CD API bearer token. The
+// sync tunables (AppNamespace, Prune, Force) come from static configuration, so
+// they are bound here rather than passed per call.
 type ClientConfig struct {
 	Server   string
 	Token    string
 	Insecure bool
+
+	// AppNamespace is the namespace of the Application resource itself, for
+	// Argo CD's apps-in-any-namespace mode. Empty means the default.
+	AppNamespace string
+	// Prune deletes resources that are no longer in the desired state.
+	Prune bool
+	// Force uses the apply force strategy, equivalent to a force sync in the UI.
+	Force bool
 }
 
 // Client calls the Argo CD REST API.
 type Client struct {
-	server string
-	token  string
-	http   *http.Client
+	server       string
+	token        string
+	http         *http.Client
+	appNamespace string
+	prune        bool
+	force        bool
 }
 
 // NewClient builds a Client. When cfg.Insecure is set, TLS verification is
@@ -41,34 +54,27 @@ func NewClient(cfg ClientConfig) *Client {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // opt-in via ARGOCD_INSECURE
 	}
 	return &Client{
-		server: cfg.Server,
-		token:  cfg.Token,
-		http:   &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		server:       cfg.Server,
+		token:        cfg.Token,
+		http:         &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		appNamespace: cfg.AppNamespace,
+		prune:        cfg.Prune,
+		force:        cfg.Force,
 	}
 }
 
-// SyncOptions controls a single sync request.
-type SyncOptions struct {
-	// AppNamespace is the namespace of the Application resource itself, for
-	// Argo CD's apps-in-any-namespace mode. Empty means the default.
-	AppNamespace string
-	// Prune deletes resources that are no longer in the desired state.
-	Prune bool
-	// Force uses the apply force strategy, equivalent to a force sync in the UI.
-	Force bool
-}
-
-// Sync triggers a sync of the named Argo CD Application. A non-2xx response is
-// returned as an error including the response body.
-func (c *Client) Sync(ctx context.Context, appName string, opts SyncOptions) error {
+// Sync triggers a sync of the named Argo CD Application. Unlike a Kubernetes
+// refresh, this deploys regardless of the Application's auto-sync setting. A
+// non-2xx response is returned as an error including the response body.
+func (c *Client) Sync(ctx context.Context, appName string) error {
 	reqBody := map[string]any{"name": appName}
-	if opts.AppNamespace != "" {
-		reqBody["appNamespace"] = opts.AppNamespace
+	if c.appNamespace != "" {
+		reqBody["appNamespace"] = c.appNamespace
 	}
-	if opts.Prune {
+	if c.prune {
 		reqBody["prune"] = true
 	}
-	if opts.Force {
+	if c.force {
 		reqBody["strategy"] = map[string]any{"apply": map[string]any{"force": true}}
 	}
 

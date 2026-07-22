@@ -1,0 +1,54 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+
+name: publish-config-bundle
+
+# Packages the manifests into a plain OCI manifest bundle and pushes it to
+# ghcr.io/<owner>/configs/argobot. The bundle is a standard OCI image artifact
+# with a single tar+gzip layer of literal Kubernetes YAML — the shape a GitOps
+# operator (Argo CD, Flux OCIRepository) consumes.
+#
+# Install the bundle into ConfigHub as a component base:
+#   cub variant upload --component argobot --variant base --granularity per-file \
+#     oci://ghcr.io/confighub/configs/argobot
+
+on:
+  push:
+    branches: [main]
+    paths: ['manifests/**']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}/configs
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install oras
+        uses: oras-project/setup-oras@v1
+
+      - name: Log in to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            oras login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Build bundle contents
+        run: |
+          mkdir -p out/argobot
+          cp manifests/*.yaml out/argobot/
+
+      - name: Package and push bundle
+        run: |
+          tar -czf argobot.tar.gz -C out/argobot .
+          oras push \
+            "$REGISTRY/argobot:latest" \
+            --artifact-type application/vnd.confighub.config.bundle.v1 \
+            "argobot.tar.gz:application/vnd.oci.image.layer.v1.tar+gzip"
+          echo "Pushed $REGISTRY/argobot:latest"

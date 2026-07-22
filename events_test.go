@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -60,4 +61,55 @@ func TestResolveAppName(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fakeSyncer records the app names it was asked to sync.
+type fakeSyncer struct {
+	synced []string
+	err    error
+}
+
+func (f *fakeSyncer) Sync(_ context.Context, appName string) error {
+	f.synced = append(f.synced, appName)
+	return f.err
+}
+
+func TestMakeEventHandler(t *testing.T) {
+	payload := func(slug string) json.RawMessage {
+		b, _ := json.Marshal(map[string]any{"SpaceSlug": slug})
+		return b
+	}
+
+	t.Run("resolved app is synced", func(t *testing.T) {
+		syncer := &fakeSyncer{}
+		handler := makeEventHandler(syncer, config{})
+		handler(context.Background(), api.EventLogEntry{
+			EventType: eventTypeReleasePublished,
+			Payload:   payload("nonprod-argobot"),
+		})
+		if got := syncer.synced; len(got) != 1 || got[0] != "nonprod-argobot" {
+			t.Fatalf("synced = %v, want [nonprod-argobot]", got)
+		}
+	})
+
+	t.Run("unresolvable event is skipped", func(t *testing.T) {
+		syncer := &fakeSyncer{}
+		handler := makeEventHandler(syncer, config{})
+		handler(context.Background(), api.EventLogEntry{EventType: eventTypeApplyCompleted})
+		if len(syncer.synced) != 0 {
+			t.Fatalf("synced = %v, want none", syncer.synced)
+		}
+	})
+
+	t.Run("ArgoApp override is synced", func(t *testing.T) {
+		syncer := &fakeSyncer{}
+		handler := makeEventHandler(syncer, config{ArgoApp: "pinned-app"})
+		handler(context.Background(), api.EventLogEntry{
+			EventType: eventTypeApplyCompleted,
+			Payload:   payload("ignored-slug"),
+		})
+		if got := syncer.synced; len(got) != 1 || got[0] != "pinned-app" {
+			t.Fatalf("synced = %v, want [pinned-app]", got)
+		}
+	})
 }

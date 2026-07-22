@@ -1,0 +1,162 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Complete, self-documenting Kubernetes deployment for argobot.
+#
+# Every environment variable argobot supports appears in the Deployment's env
+# list below: those with a default are set to that default; those that must be
+# absent by default are commented out (uncomment and set to opt in). Secret
+# values come from the argobot-secrets Secret rather than being written inline.
+#
+# argobot runs in its own `argobot` namespace; its RBAC to sync Argo CD
+# Applications lives in the `argocd` namespace (assumed to already exist — this
+# manifest does not create or manage it).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argobot
+---
+# Secret holding argobot's credentials. Replace the placeholder values (or
+# supply them from your secret store / External Secrets). ARGOCD_AUTH_TOKEN is
+# only needed when ARGO_SYNC_MODE=argocd.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argobot-secrets
+  namespace: argobot
+type: Opaque
+stringData:
+  CONFIGHUB_WORKER_ID: "replace-me"
+  CONFIGHUB_WORKER_SECRET: "replace-me"
+  # ARGOCD_AUTH_TOKEN: "replace-me"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argobot
+  namespace: argobot
+---
+# In the default kubernetes sync mode argobot patches the Application's refresh
+# annotation, so it needs get/patch on Applications in the Argo CD namespace.
+# list/watch are included for the upcoming resource-watching (health reporting).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argobot-application-sync
+  namespace: argocd
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argobot-application-sync
+  namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argobot-application-sync
+subjects:
+  - kind: ServiceAccount
+    name: argobot
+    namespace: argobot
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argobot
+  namespace: argobot
+  labels:
+    app: argobot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: argobot
+  template:
+    metadata:
+      labels:
+        app: argobot
+    spec:
+      serviceAccountName: argobot
+      containers:
+        - name: argobot
+          image: ghcr.io/confighub/argobot:latest
+          env:
+            # ── ConfigHub connection (required) ──────────────────────────────
+            - name: CONFIGHUB_URL
+              value: "https://hub.confighub.com"
+            - name: CONFIGHUB_WORKER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: argobot-secrets
+                  key: CONFIGHUB_WORKER_ID
+            - name: CONFIGHUB_WORKER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: argobot-secrets
+                  key: CONFIGHUB_WORKER_SECRET
+
+            # ── Sync mode ────────────────────────────────────────────────────
+            # "kubernetes" (default) patches the Application's refresh annotation
+            # via the Kubernetes API (deploys only if auto-sync is enabled);
+            # "argocd" calls the Argo CD REST API (deploys unconditionally).
+            - name: ARGO_SYNC_MODE
+              value: "kubernetes"
+
+            # ── Kubernetes sync mode ─────────────────────────────────────────
+            # Namespace holding the Argo CD Application resources.
+            - name: ARGO_NAMESPACE
+              value: "argocd"
+            # Refresh type: "hard" (re-resolve source, incl. OCI tag->digest) or
+            # "normal".
+            - name: ARGO_REFRESH_TYPE
+              value: "hard"
+
+            # ── Argo CD REST sync mode (only when ARGO_SYNC_MODE=argocd) ──────
+            # - name: ARGOCD_SERVER
+            #   value: "https://argocd.example.com"
+            # - name: ARGOCD_INSECURE
+            #   value: "false"
+            # - name: ARGOCD_AUTH_TOKEN
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: argobot-secrets
+            #       key: ARGOCD_AUTH_TOKEN
+            # Application namespace passed to the REST sync (apps-in-any-namespace).
+            # - name: ARGO_APP_NAMESPACE
+            #   value: ""
+            # - name: ARGO_PRUNE
+            #   value: "false"
+            # - name: ARGO_FORCE
+            #   value: "false"
+
+            # ── Event subscription ───────────────────────────────────────────
+            # Keys the server-held delivery cursor; keep it stable across restarts.
+            - name: CONFIGHUB_SUBSCRIPTION_NAME
+              value: "argobot"
+            # Scope delivery to one Space / Target (UUID); absent = every one.
+            # - name: CONFIGHUB_EVENT_SPACE_ID
+            #   value: ""
+            # - name: CONFIGHUB_EVENT_TARGET_ID
+            #   value: ""
+
+            # ── Application resolution ───────────────────────────────────────
+            # Pin one Application for every event. Absent = resolve from the
+            # event's Space slug (app-name == space-slug convention).
+            # - name: ARGO_APP
+            #   value: "my-app"
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]

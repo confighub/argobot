@@ -25,9 +25,19 @@ type config struct {
 	WorkerID     string
 	WorkerSecret string
 
+	// ArgoSyncMode selects how argobot triggers a sync: "kubernetes" (default)
+	// patches the Application's refresh annotation via the Kubernetes API;
+	// "argocd" calls the Argo CD REST /sync endpoint.
+	ArgoSyncMode string
+
 	ArgoServer   string
 	ArgoToken    string
 	ArgoInsecure bool
+
+	// Kubernetes-mode settings. ArgoNamespace is where the Application resources
+	// live (defaults to "argocd"). ArgoRefreshType is "hard" or "normal".
+	ArgoNamespace   string
+	ArgoRefreshType string
 
 	// Event subscription scope. SubscriptionName keys argobot's server-stored
 	// delivery cursor and must be stable across restarts. SpaceID and TargetID
@@ -50,9 +60,12 @@ func loadConfig() (config, error) {
 		ConfigHubURL:     os.Getenv("CONFIGHUB_URL"),
 		WorkerID:         os.Getenv("CONFIGHUB_WORKER_ID"),
 		WorkerSecret:     os.Getenv("CONFIGHUB_WORKER_SECRET"),
+		ArgoSyncMode:     os.Getenv("ARGO_SYNC_MODE"),
 		ArgoServer:       strings.TrimRight(os.Getenv("ARGOCD_SERVER"), "/"),
 		ArgoToken:        os.Getenv("ARGOCD_AUTH_TOKEN"),
 		ArgoInsecure:     os.Getenv("ARGOCD_INSECURE") == "true",
+		ArgoNamespace:    os.Getenv("ARGO_NAMESPACE"),
+		ArgoRefreshType:  os.Getenv("ARGO_REFRESH_TYPE"),
 		SubscriptionName: os.Getenv("CONFIGHUB_SUBSCRIPTION_NAME"),
 		EventSpaceID:     os.Getenv("CONFIGHUB_EVENT_SPACE_ID"),
 		EventTargetID:    os.Getenv("CONFIGHUB_EVENT_TARGET_ID"),
@@ -64,14 +77,33 @@ func loadConfig() (config, error) {
 	if cfg.SubscriptionName == "" {
 		cfg.SubscriptionName = "argobot"
 	}
+	if cfg.ArgoSyncMode == "" {
+		cfg.ArgoSyncMode = SyncModeKubernetes
+	}
+	if cfg.ArgoNamespace == "" {
+		cfg.ArgoNamespace = "argocd"
+	}
+	if cfg.ArgoRefreshType == "" {
+		cfg.ArgoRefreshType = "hard"
+	}
 
 	required := map[string]string{
 		"CONFIGHUB_URL":           cfg.ConfigHubURL,
 		"CONFIGHUB_WORKER_ID":     cfg.WorkerID,
 		"CONFIGHUB_WORKER_SECRET": cfg.WorkerSecret,
-		"ARGOCD_SERVER":           cfg.ArgoServer,
-		"ARGOCD_AUTH_TOKEN":       cfg.ArgoToken,
 	}
+	switch cfg.ArgoSyncMode {
+	case SyncModeKubernetes:
+		// No extra required vars: in-cluster credentials come from the
+		// ServiceAccount, and ARGO_NAMESPACE has a default.
+	case SyncModeArgoCD:
+		required["ARGOCD_SERVER"] = cfg.ArgoServer
+		required["ARGOCD_AUTH_TOKEN"] = cfg.ArgoToken
+	default:
+		return config{}, fmt.Errorf("invalid ARGO_SYNC_MODE %q: must be %q or %q",
+			cfg.ArgoSyncMode, SyncModeKubernetes, SyncModeArgoCD)
+	}
+
 	var missing []string
 	for name, value := range required {
 		if value == "" {
