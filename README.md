@@ -91,7 +91,7 @@ A `cub unit apply` or a `cub release` for the scoped (Space, Target) now emits a
 
 ## Deploy
 
-argobot runs in the cluster alongside Argo CD. `manifests/argobot.yaml` is a complete, self-documenting deployment: a Namespace, a Secret (placeholder credentials), a ServiceAccount, a Role/RoleBinding in the Argo CD namespace granting `patch` (and, for upcoming health reporting, `list`/`watch`) on Argo CD Applications, and a Deployment whose `env` list carries **every** supported variable — defaults filled in, and the ones that must be absent by default commented out. Fill in the Secret (or supply it from your secret store) and apply.
+argobot runs in the cluster alongside Argo CD. `manifests/argobot.yaml` is a complete, self-documenting deployment: a Namespace, a ServiceAccount, a Role/RoleBinding in the Argo CD namespace granting `patch` (and, for upcoming health reporting, `list`/`watch`) on Argo CD Applications, and a Deployment whose `env` list carries **every** supported variable — defaults filled in, and the ones that must be absent by default commented out. The Deployment reads its credentials from a Secret named `argobot-secrets` via `secretKeyRef`; that Secret is intentionally **not** part of the manifest — supply it out of band (secret store / External Secrets, or `kubectl create secret generic argobot-secrets --from-literal=...`) so the bundle never ships or overwrites credential material. Expected keys: `CONFIGHUB_WORKER_ID`, `CONFIGHUB_WORKER_SECRET`, and (argocd mode only) `ARGOCD_AUTH_TOKEN`.
 
 The Role/RoleBinding are in the Argo CD namespace (`argocd` by default), where the Application resources live, while the Namespace, ServiceAccount, and Deployment are argobot's own — adjust the namespaces to match your cluster.
 
