@@ -34,9 +34,6 @@ const (
 	liveStatusMaxMessage = 200
 	// liveStatusSource identifies argobot as the reporting client.
 	liveStatusSource = "argobot"
-	// spacesRefreshInterval rate-limits re-listing the worker's Targets when an
-	// Application's Space is not yet known (e.g. a deployment added after start).
-	spacesRefreshInterval = 30 * time.Second
 	// ociSpacePathSep precedes the deployment Space slug in an Application's OCI
 	// source repoURL: .../space/<space-slug>.
 	ociSpacePathSep = "/space/"
@@ -49,9 +46,11 @@ const (
 // Kubernetes watches cannot filter on annotations, so the reporter watches every
 // Application in the namespace and maps each to its Space in-process: the
 // Application's OCI source (.../space/<slug>) — equivalently its name — names the
-// deployment Space, and slug->id resolves against the Targets this worker is the
-// bridge for. An Application whose Space is not one of those is ignored, which is
-// also the filter for "an Application argobot is responsible for".
+// deployment Space, and the slug is resolved to a Space id by a direct lookup
+// (the worker may read a Space it is the release bridge worker for, which is
+// exactly the deployment Spaces it reports on). An Application whose slug does
+// not resolve is ignored, which is also the filter for "an Application argobot is
+// responsible for".
 //
 // It is best-effort feedback, not control: a dropped or delayed report costs
 // only freshness. Writes are deduplicated against the last projection so an idle
@@ -60,7 +59,6 @@ const (
 type reporter struct {
 	frontdoor *lib.WorkerFrontdoorClient
 	cub       *goclientnew.ClientWithResponses
-	workerID  string
 	namespace string
 	informer  cache.SharedIndexInformer
 	queue     workqueue.TypedRateLimitingInterface[string]
@@ -69,12 +67,9 @@ type reporter struct {
 	// written (the encoded Status with ObservedAt omitted).
 	lastSig map[string]string
 
-	// spaces maps a deployment Space slug to its id, built from the Targets this
-	// worker is the bridge for. spacesFetched rate-limits refreshes. Both are
-	// touched only by the single worker goroutine (and once at startup), so they
-	// need no lock.
-	spaces        map[string]uuid.UUID
-	spacesFetched time.Time
+	// spaceIDs caches resolved deployment-Space slug -> id lookups. Touched only
+	// by the single worker goroutine, so it needs no lock.
+	spaceIDs map[string]uuid.UUID
 }
 
 // newReporter builds the live-status reporter: a dynamic Kubernetes client
@@ -102,12 +97,11 @@ func newReporter(cfg config) (*reporter, error) {
 	r := &reporter{
 		frontdoor: fc,
 		cub:       client,
-		workerID:  cfg.WorkerID,
 		namespace: cfg.ArgoNamespace,
 		informer:  informer,
 		queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
 		lastSig:   make(map[string]string),
-		spaces:    make(map[string]uuid.UUID),
+		spaceIDs:  make(map[string]uuid.UUID),
 	}
 
 	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -127,12 +121,6 @@ func newReporter(cfg config) (*reporter, error) {
 func (r *reporter) Run(ctx context.Context) error {
 	defer r.frontdoor.Close()
 
-	// Prime the Space map. A failure here is not fatal: the worker refreshes on
-	// demand when it meets an unknown Application.
-	if err := r.refreshSpaces(ctx); err != nil {
-		log.Printf("[WARN] live-status reporter: initial Target discovery failed: %v", err)
-	}
-
 	go r.informer.Run(ctx.Done())
 	if !cache.WaitForCacheSync(ctx.Done(), r.informer.HasSynced) {
 		if ctx.Err() != nil {
@@ -143,8 +131,7 @@ func (r *reporter) Run(ctx context.Context) error {
 		log.Printf("[WARN] live-status reporter: informer cache failed to sync; reporting disabled")
 		return nil
 	}
-	log.Printf("[INFO] live-status reporter: watching Argo Applications in namespace %q (%d deployment Space(s) known)",
-		r.namespace, len(r.spaces))
+	log.Printf("[INFO] live-status reporter: watching Argo Applications in namespace %q", r.namespace)
 
 	go r.runWorker(ctx)
 
@@ -205,9 +192,9 @@ func (r *reporter) report(ctx context.Context, key string) error {
 	}
 
 	slug := deploymentSpaceSlug(u)
-	spaceID, known := r.lookupSpace(ctx, slug)
+	spaceID, known := r.getSpaceID(ctx, slug)
 	if !known {
-		// Not a Space this worker is the bridge for — not ours to report on.
+		// Slug did not resolve to a Space this worker can see — not ours.
 		return nil
 	}
 
@@ -238,51 +225,38 @@ func (r *reporter) report(ctx context.Context, key string) error {
 	return nil
 }
 
-// lookupSpace resolves a deployment Space slug to its id from the worker's
-// Targets, refreshing the map (rate-limited) if the slug is not yet known — a
-// deployment can be added after the reporter starts.
-func (r *reporter) lookupSpace(ctx context.Context, slug string) (uuid.UUID, bool) {
+// getSpaceID resolves a deployment Space slug to its id, caching hits. The
+// worker identity may read a Space it is the release bridge worker for — exactly
+// the deployment Spaces it reports on — so a slug that resolves is by definition
+// one this worker is responsible for. A slug that does not resolve (not found,
+// or a Space the worker cannot see) is treated as not-ours and skipped.
+func (r *reporter) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool) {
 	if slug == "" {
 		return uuid.Nil, false
 	}
-	if id, ok := r.spaces[slug]; ok {
+	if id, ok := r.spaceIDs[slug]; ok {
 		return id, true
 	}
-	if time.Since(r.spacesFetched) < spacesRefreshInterval {
-		return uuid.Nil, false
-	}
-	if err := r.refreshSpaces(ctx); err != nil {
-		log.Printf("[WARN] live-status reporter: Target discovery: %v", err)
-		return uuid.Nil, false
-	}
-	id, ok := r.spaces[slug]
-	return id, ok
-}
 
-// refreshSpaces rebuilds the deployment-Space slug->id map from the Targets this
-// worker is the bridge for. A worker may read its own Targets even though it
-// cannot list Spaces, and each Target carries its Space's id and slug.
-func (r *reporter) refreshSpaces(ctx context.Context) error {
-	where := fmt.Sprintf("BridgeWorkerID = '%s'", r.workerID)
-	resp, err := r.cub.ListAllTargetsWithResponse(ctx, &goclientnew.ListAllTargetsParams{Where: &where})
+	where := fmt.Sprintf("Slug = '%s'", slug)
+	resp, err := r.cub.ListSpacesWithResponse(ctx, &goclientnew.ListSpacesParams{Where: &where})
 	if err != nil {
-		return fmt.Errorf("list worker targets: %w", err)
+		log.Printf("[WARN] live-status reporter: resolve space %q: %v", slug, err)
+		return uuid.Nil, false
 	}
 	if resp.JSON200 == nil {
-		return fmt.Errorf("list worker targets: unexpected HTTP %d: %s",
-			resp.HTTPResponse.StatusCode, string(resp.Body))
+		log.Printf("[WARN] live-status reporter: resolve space %q: unexpected HTTP %d: %s",
+			slug, resp.HTTPResponse.StatusCode, string(resp.Body))
+		return uuid.Nil, false
 	}
 
-	m := make(map[string]uuid.UUID)
-	for _, et := range *resp.JSON200 {
-		if et.Target == nil || et.Target.SpaceSlug == "" {
-			continue
+	for _, es := range *resp.JSON200 {
+		if es.Space != nil && es.Space.Slug == slug {
+			r.spaceIDs[slug] = es.Space.SpaceID
+			return es.Space.SpaceID, true
 		}
-		m[et.Target.SpaceSlug] = et.Target.SpaceID
 	}
-	r.spaces = m
-	r.spacesFetched = time.Now()
-	return nil
+	return uuid.Nil, false
 }
 
 // patchSpace merge-patches the confighub.com/live-status annotation onto the
