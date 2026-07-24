@@ -55,6 +55,14 @@ type config struct {
 	ArgoAppNamespace string
 	ArgoPrune        bool
 	ArgoForce        bool
+
+	// ReportLiveStatus enables the reporter that watches Argo CD Applications and
+	// writes their status back to the deployment Space as the
+	// confighub.com/live-status annotation. On by default; set
+	// CONFIGHUB_REPORT_LIVE_STATUS=false to disable. It needs Kubernetes access
+	// (in-cluster or a kubeconfig); when it cannot reach the cluster it is skipped
+	// with a warning rather than failing the bot.
+	ReportLiveStatus bool
 }
 
 func loadConfig() (config, error) {
@@ -75,6 +83,7 @@ func loadConfig() (config, error) {
 		ArgoAppNamespace: os.Getenv("ARGO_APP_NAMESPACE"),
 		ArgoPrune:        os.Getenv("ARGO_PRUNE") == "true",
 		ArgoForce:        os.Getenv("ARGO_FORCE") == "true",
+		ReportLiveStatus: os.Getenv("CONFIGHUB_REPORT_LIVE_STATUS") != "false",
 	}
 	if cfg.SubscriptionName == "" {
 		cfg.SubscriptionName = "argobot"

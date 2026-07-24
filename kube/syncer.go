@@ -21,9 +21,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// applicationsGVR is the GroupVersionResource of Argo CD Application custom
+// ApplicationsGVR is the GroupVersionResource of Argo CD Application custom
 // resources.
-var applicationsGVR = schema.GroupVersionResource{
+var ApplicationsGVR = schema.GroupVersionResource{
 	Group:    "argoproj.io",
 	Version:  "v1alpha1",
 	Resource: "applications",
@@ -48,13 +48,9 @@ type Syncer struct {
 // in a pod, falling back to the local kubeconfig (KUBECONFIG or ~/.kube/config)
 // for out-of-cluster use.
 func NewSyncer(cfg Config) (*Syncer, error) {
-	restCfg, err := restConfig()
+	client, err := NewDynamicClient()
 	if err != nil {
-		return nil, fmt.Errorf("build kubernetes config: %w", err)
-	}
-	client, err := dynamic.NewForConfig(restCfg)
-	if err != nil {
-		return nil, fmt.Errorf("build kubernetes client: %w", err)
+		return nil, err
 	}
 	refreshType := cfg.RefreshType
 	if refreshType == "" {
@@ -65,6 +61,21 @@ func NewSyncer(cfg Config) (*Syncer, error) {
 		namespace:   cfg.Namespace,
 		refreshType: refreshType,
 	}, nil
+}
+
+// NewDynamicClient builds a dynamic Kubernetes client, preferring the in-cluster
+// ServiceAccount and falling back to the local kubeconfig. It is shared by the
+// Syncer and the live-status reporter.
+func NewDynamicClient() (dynamic.Interface, error) {
+	restCfg, err := restConfig()
+	if err != nil {
+		return nil, fmt.Errorf("build kubernetes config: %w", err)
+	}
+	client, err := dynamic.NewForConfig(restCfg)
+	if err != nil {
+		return nil, fmt.Errorf("build kubernetes client: %w", err)
+	}
+	return client, nil
 }
 
 // restConfig prefers in-cluster credentials and falls back to a kubeconfig file.
@@ -84,7 +95,7 @@ func (s *Syncer) Sync(ctx context.Context, appName string) error {
 	patch := fmt.Appendf(nil,
 		`{"metadata":{"annotations":{"argocd.argoproj.io/refresh":%q}}}`, s.refreshType)
 
-	_, err := s.client.Resource(applicationsGVR).Namespace(s.namespace).
+	_, err := s.client.Resource(ApplicationsGVR).Namespace(s.namespace).
 		Patch(ctx, appName, types.MergePatchType, patch, metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("patch Argo CD application %q in namespace %q: %w", appName, s.namespace, err)
