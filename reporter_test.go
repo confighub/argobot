@@ -104,6 +104,45 @@ func TestDedupSignatureStable(t *testing.T) {
 	}
 }
 
+func TestSpaceSlugFromRepoURL(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"https://oci.example.com/space/orders-prod", "orders-prod"},
+		{"https://oci.example.com/space/orders-prod/", "orders-prod"},
+		{"http://host.docker.internal:9092/space/api-staging", "api-staging"},
+		{"https://oci.example.com/space/", ""},
+		{"https://oci.example.com/notspace/orders-prod", ""},
+		{"", ""},
+		// A trailing extra path segment is not a bare slug.
+		{"https://oci.example.com/space/orders/prod", ""},
+	}
+	for _, c := range cases {
+		if got := spaceSlugFromRepoURL(c.in); got != c.want {
+			t.Errorf("spaceSlugFromRepoURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestDeploymentSpaceSlugFallsBackToName(t *testing.T) {
+	// No OCI source: fall back to the Application name (== Space slug).
+	u := app("orders-prod", map[string]any{})
+	if got := deploymentSpaceSlug(u); got != "orders-prod" {
+		t.Errorf("deploymentSpaceSlug fallback = %q, want orders-prod", got)
+	}
+
+	// With an OCI source, the repoURL wins.
+	u2 := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "some-app"},
+		"spec": map[string]any{
+			"source": map[string]any{"repoURL": "https://oci.example.com/space/orders-prod"},
+		},
+	}}
+	if got := deploymentSpaceSlug(u2); got != "orders-prod" {
+		t.Errorf("deploymentSpaceSlug from repoURL = %q, want orders-prod", got)
+	}
+}
+
 func TestTruncateBounds(t *testing.T) {
 	if got := truncate("hello", 100); got != "hello" {
 		t.Errorf("no-op truncate = %q", got)

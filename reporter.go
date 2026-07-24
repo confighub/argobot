@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/confighub/argobot/kube"
@@ -15,7 +16,6 @@ import (
 	goclientnew "github.com/confighub/sdk/core/openapi/goclient-new"
 	"github.com/confighub/sdk/core/worker/lib"
 	"github.com/google/uuid"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/tools/cache"
@@ -34,36 +34,52 @@ const (
 	liveStatusMaxMessage = 200
 	// liveStatusSource identifies argobot as the reporting client.
 	liveStatusSource = "argobot"
+	// spacesRefreshInterval rate-limits re-listing the worker's Targets when an
+	// Application's Space is not yet known (e.g. a deployment added after start).
+	spacesRefreshInterval = 30 * time.Second
+	// ociSpacePathSep precedes the deployment Space slug in an Application's OCI
+	// source repoURL: .../space/<space-slug>.
+	ociSpacePathSep = "/space/"
 )
 
 // reporter watches Argo CD Application CRs and writes each one's live status
 // back to its ConfigHub deployment Space as the confighub.com/live-status
-// annotation. It maps an Application to its Space via the confighub.com/space-id
-// label ConfigHub stamps on the Application, so the watched set is a
-// self-updating, label-selected slice with no re-query: Applications appear and
-// disappear in the informer as they are labeled.
+// annotation.
+//
+// Kubernetes watches cannot filter on annotations, so the reporter watches every
+// Application in the namespace and maps each to its Space in-process: the
+// Application's OCI source (.../space/<slug>) — equivalently its name — names the
+// deployment Space, and slug->id resolves against the Targets this worker is the
+// bridge for. An Application whose Space is not one of those is ignored, which is
+// also the filter for "an Application argobot is responsible for".
 //
 // It is best-effort feedback, not control: a dropped or delayed report costs
-// only freshness. Writes are deduplicated against the last projection so an
-// idle Application produces no Space churn, and coalesced per Application so a
-// sync's burst of updates is one write.
+// only freshness. Writes are deduplicated against the last projection so an idle
+// Application produces no Space churn, and coalesced per Application so a sync's
+// burst of updates is one write.
 type reporter struct {
 	frontdoor *lib.WorkerFrontdoorClient
 	cub       *goclientnew.ClientWithResponses
+	workerID  string
 	namespace string
 	informer  cache.SharedIndexInformer
 	queue     workqueue.TypedRateLimitingInterface[string]
 
 	// lastSig deduplicates writes: appKey -> signature of the last projection
-	// written (the encoded Status with ObservedAt omitted). Accessed only by the
-	// single worker goroutine, so it needs no lock.
+	// written (the encoded Status with ObservedAt omitted).
 	lastSig map[string]string
+
+	// spaces maps a deployment Space slug to its id, built from the Targets this
+	// worker is the bridge for. spacesFetched rate-limits refreshes. Both are
+	// touched only by the single worker goroutine (and once at startup), so they
+	// need no lock.
+	spaces        map[string]uuid.UUID
+	spacesFetched time.Time
 }
 
-// newReporter builds the live-status reporter. It constructs a dynamic
-// Kubernetes client (in-cluster or kubeconfig) and a ConfigHub API client under
-// the worker identity, and sets up a label-filtered informer over Argo
-// Applications in the configured namespace.
+// newReporter builds the live-status reporter: a dynamic Kubernetes client
+// (in-cluster or kubeconfig), a ConfigHub API client under the worker identity,
+// and an unfiltered informer over Argo Applications in the configured namespace.
 func newReporter(cfg config) (*reporter, error) {
 	dyn, err := kube.NewDynamicClient()
 	if err != nil {
@@ -77,23 +93,21 @@ func newReporter(cfg config) (*reporter, error) {
 		return nil, fmt.Errorf("worker frontdoor authentication failed")
 	}
 
+	// No label selector: annotations are not watch-filterable, so the reporter
+	// watches all Applications and filters in-process by Space ownership.
 	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
-		dyn, liveStatusResync, cfg.ArgoNamespace,
-		func(o *metav1.ListOptions) {
-			// A bare label key selects Applications that carry the label,
-			// i.e. the deployment Applications ConfigHub created.
-			o.LabelSelector = livestatus.LabelSpaceID
-		},
-	)
+		dyn, liveStatusResync, cfg.ArgoNamespace, nil)
 	informer := factory.ForResource(kube.ApplicationsGVR).Informer()
 
 	r := &reporter{
 		frontdoor: fc,
 		cub:       client,
+		workerID:  cfg.WorkerID,
 		namespace: cfg.ArgoNamespace,
 		informer:  informer,
 		queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
 		lastSig:   make(map[string]string),
+		spaces:    make(map[string]uuid.UUID),
 	}
 
 	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -113,6 +127,12 @@ func newReporter(cfg config) (*reporter, error) {
 func (r *reporter) Run(ctx context.Context) error {
 	defer r.frontdoor.Close()
 
+	// Prime the Space map. A failure here is not fatal: the worker refreshes on
+	// demand when it meets an unknown Application.
+	if err := r.refreshSpaces(ctx); err != nil {
+		log.Printf("[WARN] live-status reporter: initial Target discovery failed: %v", err)
+	}
+
 	go r.informer.Run(ctx.Done())
 	if !cache.WaitForCacheSync(ctx.Done(), r.informer.HasSynced) {
 		if ctx.Err() != nil {
@@ -123,8 +143,8 @@ func (r *reporter) Run(ctx context.Context) error {
 		log.Printf("[WARN] live-status reporter: informer cache failed to sync; reporting disabled")
 		return nil
 	}
-	log.Printf("[INFO] live-status reporter: watching Argo Applications labeled %s in namespace %q",
-		livestatus.LabelSpaceID, r.namespace)
+	log.Printf("[INFO] live-status reporter: watching Argo Applications in namespace %q (%d deployment Space(s) known)",
+		r.namespace, len(r.spaces))
 
 	go r.runWorker(ctx)
 
@@ -167,7 +187,7 @@ func (r *reporter) enqueue(obj any) {
 
 // report projects the current state of the Application named by key and, if it
 // changed since the last write, patches its Space's confighub.com/live-status
-// annotation.
+// annotation. Applications whose Space this worker does not serve are ignored.
 func (r *reporter) report(ctx context.Context, key string) error {
 	obj, exists, err := r.informer.GetStore().GetByKey(key)
 	if err != nil {
@@ -184,13 +204,11 @@ func (r *reporter) report(ctx context.Context, key string) error {
 		return fmt.Errorf("unexpected object type %T for %s", obj, key)
 	}
 
-	spaceIDStr := u.GetLabels()[livestatus.LabelSpaceID]
-	if spaceIDStr == "" {
-		return nil // not a ConfigHub-managed deployment Application
-	}
-	spaceID, err := uuid.Parse(spaceIDStr)
-	if err != nil {
-		return fmt.Errorf("application %s has invalid %s label %q: %w", key, livestatus.LabelSpaceID, spaceIDStr, err)
+	slug := deploymentSpaceSlug(u)
+	spaceID, known := r.lookupSpace(ctx, slug)
+	if !known {
+		// Not a Space this worker is the bridge for — not ours to report on.
+		return nil
 	}
 
 	status := projectStatus(u)
@@ -220,6 +238,53 @@ func (r *reporter) report(ctx context.Context, key string) error {
 	return nil
 }
 
+// lookupSpace resolves a deployment Space slug to its id from the worker's
+// Targets, refreshing the map (rate-limited) if the slug is not yet known — a
+// deployment can be added after the reporter starts.
+func (r *reporter) lookupSpace(ctx context.Context, slug string) (uuid.UUID, bool) {
+	if slug == "" {
+		return uuid.Nil, false
+	}
+	if id, ok := r.spaces[slug]; ok {
+		return id, true
+	}
+	if time.Since(r.spacesFetched) < spacesRefreshInterval {
+		return uuid.Nil, false
+	}
+	if err := r.refreshSpaces(ctx); err != nil {
+		log.Printf("[WARN] live-status reporter: Target discovery: %v", err)
+		return uuid.Nil, false
+	}
+	id, ok := r.spaces[slug]
+	return id, ok
+}
+
+// refreshSpaces rebuilds the deployment-Space slug->id map from the Targets this
+// worker is the bridge for. A worker may read its own Targets even though it
+// cannot list Spaces, and each Target carries its Space's id and slug.
+func (r *reporter) refreshSpaces(ctx context.Context) error {
+	where := fmt.Sprintf("BridgeWorkerID = '%s'", r.workerID)
+	resp, err := r.cub.ListAllTargetsWithResponse(ctx, &goclientnew.ListAllTargetsParams{Where: &where})
+	if err != nil {
+		return fmt.Errorf("list worker targets: %w", err)
+	}
+	if resp.JSON200 == nil {
+		return fmt.Errorf("list worker targets: unexpected HTTP %d: %s",
+			resp.HTTPResponse.StatusCode, string(resp.Body))
+	}
+
+	m := make(map[string]uuid.UUID)
+	for _, et := range *resp.JSON200 {
+		if et.Target == nil || et.Target.SpaceSlug == "" {
+			continue
+		}
+		m[et.Target.SpaceSlug] = et.Target.SpaceID
+	}
+	r.spaces = m
+	r.spacesFetched = time.Now()
+	return nil
+}
+
 // patchSpace merge-patches the confighub.com/live-status annotation onto the
 // Space. The worker identity is authorized because it is the Space's release
 // bridge worker.
@@ -239,6 +304,32 @@ func (r *reporter) patchSpace(ctx context.Context, spaceID uuid.UUID, value stri
 			spaceID, resp.HTTPResponse.StatusCode, string(resp.Body))
 	}
 	return nil
+}
+
+// deploymentSpaceSlug returns the deployment Space slug an Application belongs to:
+// the last path segment of its OCI source repoURL (.../space/<slug>), falling
+// back to the Application name, which equals the Space slug by convention.
+func deploymentSpaceSlug(u *unstructured.Unstructured) string {
+	repoURL, _, _ := unstructured.NestedString(u.Object, "spec", "source", "repoURL")
+	if slug := spaceSlugFromRepoURL(repoURL); slug != "" {
+		return slug
+	}
+	return u.GetName()
+}
+
+// spaceSlugFromRepoURL extracts <slug> from an OCI repoURL of the form
+// .../space/<slug>. It returns "" when the URL has no such segment or the slug
+// is empty or itself contains a path separator.
+func spaceSlugFromRepoURL(repoURL string) string {
+	i := strings.LastIndex(repoURL, ociSpacePathSep)
+	if i < 0 {
+		return ""
+	}
+	slug := strings.Trim(repoURL[i+len(ociSpacePathSep):], "/")
+	if slug == "" || strings.Contains(slug, "/") {
+		return ""
+	}
+	return slug
 }
 
 // projectStatus reads the Argo Application's status subresource into a
