@@ -204,6 +204,15 @@ spec:
             # event's Space slug (app-name == space-slug convention).
             # - name: ARGO_APP
             #   value: "my-app"
+
+            # ── Live-status reporting ────────────────────────────────────────
+            # argobot also watches Argo CD Applications labeled
+            # confighub.com/space-id and reports their sync/health back to the
+            # deployment Space as the confighub.com/live-status annotation. On by
+            # default; set to "false" to disable. Needs Kubernetes access (the
+            # ServiceAccount above already grants it).
+            # - name: CONFIGHUB_REPORT_LIVE_STATUS
+            #   value: "false"
           resources:
             requests:
               cpu: 25m

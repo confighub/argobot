@@ -66,6 +66,20 @@ func main() {
 		consumer := worker.NewEventConsumer(cfg.ConfigHubURL, cfg.WorkerID, cfg.WorkerSecret, sub, handler)
 		g.Go(func() error { return consumer.Run(gctx) })
 	}
+
+	// Alongside consuming events, optionally watch Argo CD Applications and report
+	// their live status back to ConfigHub. It needs Kubernetes access; if the
+	// client cannot be built (e.g. argocd sync mode with no cluster access), skip
+	// it with a warning rather than failing the bot.
+	if cfg.ReportLiveStatus {
+		if rep, err := newReporter(cfg); err != nil {
+			log.Printf("[WARN] live-status reporting disabled: %v", err)
+		} else {
+			log.Printf("[INFO] argobot: live-status reporting enabled")
+			g.Go(func() error { return rep.Run(gctx) })
+		}
+	}
+
 	if err := g.Wait(); err != nil && ctx.Err() == nil {
 		log.Fatalf("[FATAL] event consumer stopped: %v", err)
 	}

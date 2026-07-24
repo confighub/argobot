@@ -25,7 +25,13 @@ Resolving the Application. When `ARGO_APP` is set, it is the single Application 
 
 Correctness belongs to Argo CD: it reconciles from its source regardless, so a missed or failed sync only loses immediacy, not correctness.
 
-The reporting direction — argobot pushing Argo / Kubernetes health back into ConfigHub — is the next step and not yet built. It is also why the default `kubernetes` sync mode already uses the Kubernetes API: argobot will need that client to watch resource health anyway.
+### Live-status reporting
+
+Alongside reacting to events, argobot reports the other direction: it watches Argo CD Applications and writes their live state back into ConfigHub, where the UI surfaces it. This is best-effort feedback — a dropped or delayed report costs only freshness, never correctness.
+
+argobot runs a Kubernetes informer over Argo CD Application CRs, selecting only those labeled `confighub.com/space-id` — the label ConfigHub stamps on the Application it auto-creates for a deployment Space. That label both defines the watched set (which updates itself as Applications are created and removed, with no re-query) and maps each Application back to its Space. For each Application, argobot projects a concise status — sync status, health status, operation phase, synced revision, a short message — and merge-patches it onto the Space as the `confighub.com/live-status` annotation. The worker identity is authorized to write because it is the Space's release bridge worker.
+
+Writes are coalesced per Application (a sync's burst of updates becomes one write) and deduplicated against the last projection (an idle Application produces no write and no Space revision churn). Reporting is on by default and needs Kubernetes access; set `CONFIGHUB_REPORT_LIVE_STATUS=false` to disable it, and if the Kubernetes client cannot be built the reporter is skipped with a warning rather than failing the bot.
 
 ## Configuration
 
@@ -49,6 +55,7 @@ All configuration is via environment variables:
 | `ARGO_APP_NAMESPACE` | no | _argocd mode._ Argo CD Application namespace passed to the REST sync request (apps-in-any-namespace). |
 | `ARGO_PRUNE` | no | _argocd mode._ `true` to prune on sync. |
 | `ARGO_FORCE` | no | _argocd mode._ `true` to use Argo's force strategy on sync. |
+| `CONFIGHUB_REPORT_LIVE_STATUS` | no | `false` to disable live-status reporting. On by default; see [Live-status reporting](#live-status-reporting). Needs Kubernetes access. |
 
 When `ARGO_SYNC_MODE` is unset, argobot runs in `kubernetes` mode and needs no Argo CD credentials; it uses the in-cluster ServiceAccount (or a local kubeconfig when run out of cluster). Set `ARGO_SYNC_MODE=argocd` to use the REST API instead, which then requires `ARGOCD_SERVER` and `ARGOCD_AUTH_TOKEN`.
 
@@ -93,7 +100,7 @@ A `cub unit apply` or a `cub release` for the scoped (Space, Target) now emits a
 
 argobot runs in the cluster alongside Argo CD. `manifests/argobot.yaml` is a complete, self-documenting deployment: a Namespace, a ServiceAccount, its RBAC (see below), and a Deployment whose `env` list carries **every** supported variable — defaults filled in, and the ones that must be absent by default commented out. The Deployment reads its credentials from a Secret named `argobot-secrets` via `secretKeyRef`; that Secret is intentionally **not** part of the manifest — supply it out of band (secret store / External Secrets, or `kubectl create secret generic argobot-secrets --from-literal=...`) so the bundle never ships or overwrites credential material. Expected keys: `CONFIGHUB_WORKER_ID`, `CONFIGHUB_WORKER_SECRET`, and (argocd mode only) `ARGOCD_AUTH_TOKEN`.
 
-RBAC comes in two parts. A **`Role`/`RoleBinding` in the Argo CD namespace** (`argocd` by default) grants read+write there — argobot patches an Application's refresh annotation to force a sync, and may manage other Argo CD resources; being namespaced, it grants nothing outside `argocd`. A **`ClusterRole`/`ClusterRoleBinding`** grants cluster-wide **read-only** (`get`/`list`/`watch`) for the upcoming health/status reporting across all namespaces — deliberately **excluding Secrets** (the core API group is enumerated without `secrets`; other groups are wildcarded, and Secrets exist only in core). Add a CRD's API group to that second rule to extend coverage. The Namespace, ServiceAccount, and Deployment are argobot's own — adjust the namespaces to match your cluster.
+RBAC comes in two parts. A **`Role`/`RoleBinding` in the Argo CD namespace** (`argocd` by default) grants read+write there — argobot patches an Application's refresh annotation to force a sync, and may manage other Argo CD resources; being namespaced, it grants nothing outside `argocd`. A **`ClusterRole`/`ClusterRoleBinding`** grants cluster-wide **read-only** (`get`/`list`/`watch`) for health/status reporting across all namespaces — deliberately **excluding Secrets** (the core API group is enumerated without `secrets`; other groups are wildcarded, and Secrets exist only in core). Add a CRD's API group to that second rule to extend coverage. The Namespace, ServiceAccount, and Deployment are argobot's own — adjust the namespaces to match your cluster.
 
 ### Config bundle
 
