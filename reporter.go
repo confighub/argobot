@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -263,13 +264,21 @@ func (r *reporter) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool
 // Space. The worker identity is authorized because it is the Space's release
 // bridge worker.
 func (r *reporter) patchSpace(ctx context.Context, spaceID uuid.UUID, value string) error {
-	v := value
-	annotations := map[string]*string{livestatus.Annotation: &v}
-	body := goclientnew.PatchSpaceApplicationMergePatchPlusJSONRequestBody{
-		Annotations: &annotations,
+	// Send a minimal merge patch of just the annotation. The generated body
+	// struct marshals its unset fields as JSON null (none are omitempty), and a
+	// merge patch reads null as "delete this field" — which would wipe Slug,
+	// ReleaseTargetID, and everything else on the Space. So hand-build the body
+	// with only Annotations. Merge-patch merges into the existing Annotations
+	// map, adding/updating confighub.com/live-status and leaving the rest intact.
+	patch, err := json.Marshal(map[string]any{
+		"Annotations": map[string]string{livestatus.Annotation: value},
+	})
+	if err != nil {
+		return fmt.Errorf("marshal space patch: %w", err)
 	}
-	resp, err := r.cub.PatchSpaceWithApplicationMergePatchPlusJSONBodyWithResponse(
-		ctx, spaceID, &goclientnew.PatchSpaceParams{}, body)
+	resp, err := r.cub.PatchSpaceWithBodyWithResponse(
+		ctx, spaceID, &goclientnew.PatchSpaceParams{},
+		"application/merge-patch+json", bytes.NewReader(patch))
 	if err != nil {
 		return fmt.Errorf("patch space %s: %w", spaceID, err)
 	}
