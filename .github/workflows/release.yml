@@ -79,7 +79,13 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/arm64
+          # Both architectures. arm64 alone made the image unusable on every
+          # amd64 cluster — containerd rejects the pull with "no match for
+          # platform in manifest", which is what `cub cluster up` hits on a
+          # GitHub runner and on any amd64 node. The Dockerfile already
+          # cross-compiles from BUILDPLATFORM, so amd64 is nearly free here:
+          # it is the runner's native arch and needs no emulation at all.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -21,9 +21,8 @@ env:
 jobs:
   build:
     # GitHub-hosted amd64 runner. The Go binary is cross-compiled natively on it
-    # for arm64 (see Dockerfile); QEMU is only registered so buildx can assemble
-    # the arm64 image layers, never to run an emulated compile. We build arm64
-    # only — the target nodes are all arm64, so amd64 would be wasted work.
+    # for both targets (see Dockerfile); QEMU is only registered so buildx can
+    # assemble the arm64 image layers, never to run an emulated compile.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -56,7 +55,10 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/arm64
+          # Match release.yml: dev images have to be runnable on the same
+          # architectures as released ones, or a branch build is untestable
+          # exactly where a release would be.
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
