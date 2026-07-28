@@ -59,7 +59,6 @@ const (
 // burst of updates is one write.
 type reporter struct {
 	frontdoor *lib.WorkerFrontdoorClient
-	cub       *goclientnew.ClientWithResponses
 	namespace string
 	informer  cache.SharedIndexInformer
 	queue     workqueue.TypedRateLimitingInterface[string]
@@ -82,9 +81,10 @@ func newReporter(cfg config) (*reporter, error) {
 		return nil, err
 	}
 
+	// Authenticate once here to fail fast on bad credentials. The client itself is
+	// deliberately not cached — see reporter.client.
 	fc := lib.NewWorkerFrontdoorClient(cfg.ConfigHubURL, "", cfg.WorkerID, cfg.WorkerSecret)
-	client := fc.GetClient()
-	if client == nil {
+	if fc.GetClient() == nil {
 		_ = fc.Close()
 		return nil, fmt.Errorf("worker frontdoor authentication failed")
 	}
@@ -97,7 +97,6 @@ func newReporter(cfg config) (*reporter, error) {
 
 	r := &reporter{
 		frontdoor: fc,
-		cub:       client,
 		namespace: cfg.ArgoNamespace,
 		informer:  informer,
 		queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
@@ -226,6 +225,21 @@ func (r *reporter) report(ctx context.Context, key string) error {
 	return nil
 }
 
+// client returns the frontdoor's current ConfigHub client. It must be called per
+// request rather than cached: the frontdoor refreshes the worker JWT on a timer,
+// and a refresh builds a *new* client bound to the new token instead of mutating
+// the old one in place. A cached client therefore keeps sending the token it was
+// created with, and starts failing with 401 "token is expired" for the process's
+// remaining lifetime once that token's 24h TTL runs out. This is a cheap
+// RLock-guarded read of an existing client — it triggers no authentication.
+func (r *reporter) client() (*goclientnew.ClientWithResponses, error) {
+	c := r.frontdoor.GetClient()
+	if c == nil {
+		return nil, fmt.Errorf("no authenticated ConfigHub client")
+	}
+	return c, nil
+}
+
 // getSpaceID resolves a deployment Space slug to its id, caching hits. The
 // worker identity may read a Space it is the release bridge worker for — exactly
 // the deployment Spaces it reports on — so a slug that resolves is by definition
@@ -239,8 +253,14 @@ func (r *reporter) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool
 		return id, true
 	}
 
+	cub, err := r.client()
+	if err != nil {
+		log.Printf("[WARN] live-status reporter: resolve space %q: %v", slug, err)
+		return uuid.Nil, false
+	}
+
 	where := fmt.Sprintf("Slug = '%s'", slug)
-	resp, err := r.cub.ListSpacesWithResponse(ctx, &goclientnew.ListSpacesParams{Where: &where})
+	resp, err := cub.ListSpacesWithResponse(ctx, &goclientnew.ListSpacesParams{Where: &where})
 	if err != nil {
 		log.Printf("[WARN] live-status reporter: resolve space %q: %v", slug, err)
 		return uuid.Nil, false
@@ -276,7 +296,11 @@ func (r *reporter) patchSpace(ctx context.Context, spaceID uuid.UUID, value stri
 	if err != nil {
 		return fmt.Errorf("marshal space patch: %w", err)
 	}
-	resp, err := r.cub.PatchSpaceWithBodyWithResponse(
+	cub, err := r.client()
+	if err != nil {
+		return fmt.Errorf("patch space %s: %w", spaceID, err)
+	}
+	resp, err := cub.PatchSpaceWithBodyWithResponse(
 		ctx, spaceID, &goclientnew.PatchSpaceParams{},
 		"application/merge-patch+json", bytes.NewReader(patch))
 	if err != nil {
