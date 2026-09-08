@@ -89,6 +89,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Attach an SPDX SBOM and provenance to the image manifest. Together with
+          # the notice files copied into the image, this is the per-release
+          # inventory of what the image contains:
+          #   docker buildx imagetools inspect $IMAGE:<tag> --format '{{json .SBOM}}'
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

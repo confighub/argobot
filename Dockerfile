@@ -2,6 +2,14 @@
 # SPDX-License-Identifier: MIT
 
 ###############
+# Pinned runtime base image (multi-arch index digest) for reproducible builds and
+# a version-exact GPL corresponding-source reference (see OS_LICENSE_NOTICE.txt).
+# alpine:3.24.1 as of 2026-06-16. Bump deliberately: re-run
+# `docker buildx imagetools inspect alpine:3.24 --format '{{.Manifest.Digest}}'`,
+# update this digest, and refresh the package list in OS_LICENSE_NOTICE.txt.
+ARG ALPINE_BASE=alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+
+###############
 # Build stage #
 ###############
 # The builder runs natively on the BUILD platform (the amd64 GitHub runner) and
@@ -29,9 +37,15 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /go/bin/argo
 # assemble/pull layers — it never executes an emulated binary. CA certs are
 # copied from the builder (a PEM bundle is arch-independent); the numeric USER
 # needs no /etc/passwd entry.
-FROM alpine:latest
+FROM ${ALPINE_BASE}
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 USER 1000:3000
 WORKDIR /app
 COPY --from=builder /go/bin/argobot .
+# Third-party notices shipped with the image (MIT/BSD/Apache require them to
+# accompany binary distributions):
+#   THIRD_PARTY_LICENSES.txt — Go modules linked into the argobot binary;
+#                              regenerate with scripts/gen-third-party-licenses.sh
+#   OS_LICENSE_NOTICE.txt    — Alpine base OS packages + GPL source offer
+COPY --from=builder /go/src/app/LICENSE /go/src/app/THIRD_PARTY_LICENSES.txt /go/src/app/OS_LICENSE_NOTICE.txt ./
 ENTRYPOINT ["/app/argobot"]
