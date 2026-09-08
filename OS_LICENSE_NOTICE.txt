@@ -36,11 +36,9 @@ published by Alpine Linux and its upstreams and can be obtained from:
       https://distfiles.alpinelinux.org/distfiles/
 
 For a period of three (3) years from the date you received this image,
-[ConfigHub, Inc.] will, on request to [legal@confighub.com], point you to the
+ConfigHub, Inc. will, on request to legal@confighub.com, point you to the
 corresponding source for the GPL-licensed components at the versions contained in
-your image. [Legal review: confirm whether pointing to Alpine's published sources
-satisfies the corresponding-source obligation for your distribution, or whether
-you wish to also host a mirror of the source archives.]
+your image.
 
 The full text of the GNU General Public License version 2, which governs the
 packages listed above, follows.
