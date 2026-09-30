@@ -14,6 +14,7 @@ import (
 	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
@@ -101,4 +102,39 @@ func (s *Syncer) Sync(ctx context.Context, appName string) error {
 		return fmt.Errorf("patch Argo CD application %q in namespace %q: %w", appName, s.namespace, err)
 	}
 	return nil
+}
+
+// RepoURLs lists the Applications in the configured namespace, mapping each name
+// to the repoURLs of its source(s): spec.source for a single-source Application
+// and every spec.sources entry for a multi-source one. An Application with no
+// source still appears, with no URLs.
+func (s *Syncer) RepoURLs(ctx context.Context) (map[string][]string, error) {
+	list, err := s.client.Resource(ApplicationsGVR).Namespace(s.namespace).
+		List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list Argo CD applications in namespace %q: %w", s.namespace, err)
+	}
+	apps := make(map[string][]string, len(list.Items))
+	for i := range list.Items {
+		apps[list.Items[i].GetName()] = sourceRepoURLs(&list.Items[i])
+	}
+	return apps, nil
+}
+
+// sourceRepoURLs returns the repoURL of the Application's spec.source and of each
+// spec.sources entry.
+func sourceRepoURLs(u *unstructured.Unstructured) []string {
+	var urls []string
+	if repoURL, _, _ := unstructured.NestedString(u.Object, "spec", "source", "repoURL"); repoURL != "" {
+		urls = append(urls, repoURL)
+	}
+	sources, _, _ := unstructured.NestedSlice(u.Object, "spec", "sources")
+	for _, src := range sources {
+		if m, ok := src.(map[string]any); ok {
+			if repoURL, _, _ := unstructured.NestedString(m, "repoURL"); repoURL != "" {
+				urls = append(urls, repoURL)
+			}
+		}
+	}
+	return urls
 }
