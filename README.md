@@ -10,7 +10,7 @@ This is the first "bot" implementation that takes a different approach than the 
 
 argobot connects as a ConfigHub worker and reacts to events over the long-poll connection:
 
-- It subscribes to the `apply.completed` and `release.published` event types. By default it scopes delivery to the Targets its own worker is the bridge for — on startup it asks ConfigHub which Targets name its worker and subscribes to each — so a bot reacts only to its own deploys without being told the Target IDs. `CONFIGHUB_EVENT_TARGET_ID` overrides this with a single explicit Target, and `CONFIGHUB_EVENT_SPACE_ID` further narrows delivery to one Space. The subscription is declared when argobot connects.
+- It subscribes to the `apply.completed` and `release.published` event types. By default it scopes delivery to the Targets its own worker is granted access to — on startup it asks ConfigHub which Targets grant the worker's bot user ViewChildren, the grant that lets it pull their Releases, and subscribes to each — so a bot reacts only to its own deploys without being told the Target IDs. `CONFIGHUB_EVENT_TARGET_ID` overrides this with a single explicit Target, and `CONFIGHUB_EVENT_SPACE_ID` further narrows delivery to one Space. The subscription is declared when argobot connects.
 - On a delivered event it resolves which Argo CD Application to sync (see below) and triggers a sync. The reaction is argobot's own; the event only says the desired state for a (Space, Target) changed.
 - The delivery cursor is held by ConfigHub, keyed by the worker and the subscription name, so a restart resumes where it left off without argobot keeping any local state.
 
@@ -50,7 +50,7 @@ All configuration is via environment variables:
 | `ARGOCD_INSECURE` | no | _argocd mode._ `true` to skip TLS verification (self-signed Argo CD) |
 | `CONFIGHUB_SUBSCRIPTION_NAME` | no | Subscription name; keys the server-held delivery cursor, so it must be stable across restarts. Defaults to `argobot`. |
 | `CONFIGHUB_EVENT_SPACE_ID` | no | Scope delivery to one Space (UUID). Empty means every Space. |
-| `CONFIGHUB_EVENT_TARGET_ID` | no | Override the Target scope with one Target (UUID). Empty (default) auto-scopes to the Targets the worker is the bridge for. |
+| `CONFIGHUB_EVENT_TARGET_ID` | no | Override the Target scope with one Target (UUID). Empty (default) auto-scopes to the Targets that grant the worker's bot user ViewChildren. |
 | `ARGO_APP` | no | The single Argo CD Application every matching event syncs. If unset, the Application is resolved from the event (a release carries its Space slug). |
 | `ARGO_APP_NAMESPACE` | no | _argocd mode._ Argo CD Application namespace passed to the REST sync request (apps-in-any-namespace). |
 | `ARGO_PRUNE` | no | _argocd mode._ `true` to prune on sync. |
