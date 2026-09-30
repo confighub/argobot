@@ -30,11 +30,11 @@ const (
 //     SubscriptionName, preserving the cursor of a deployment that pinned a
 //     Target before auto-discovery existed.
 //   - discoveredTargetIDs non-empty — one subscription per Target the worker is
-//     the BridgeWorker for, so argobot reacts to exactly its own targets. Each
+//     granted ViewChildren on, so argobot reacts to exactly its own targets. Each
 //     Name is suffixed with the Target ID to give it an independent cursor.
 //   - neither — a single unscoped subscription (every Target). This is the
-//     fallback when a worker owns no Targets; argobot stays useful rather than
-//     going silent, at the cost of reacting org-wide.
+//     fallback when a worker is granted on no Targets; argobot stays useful
+//     rather than going silent, at the cost of reacting org-wide.
 //
 // EventSpaceID, when set, further narrows every subscription (AND semantics).
 func subscriptionsForTargets(cfg config, discoveredTargetIDs []string) []api.EventSubscription {

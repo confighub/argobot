@@ -46,7 +46,7 @@ func main() {
 			log.Fatalf("[FATAL] discovering worker targets: %v", err)
 		}
 		if len(discovered) == 0 {
-			log.Printf("[WARN] argobot: worker is the bridge for no Targets; subscribing to every Target. " +
+			log.Printf("[WARN] argobot: worker is granted ViewChildren on no Targets; subscribing to every Target. " +
 				"Set CONFIGHUB_EVENT_TARGET_ID to scope explicitly.")
 		}
 	}
