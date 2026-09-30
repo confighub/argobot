@@ -24,7 +24,6 @@ SUMMARY (module — license type — source)
   github.com/cockroachdb/redact                           Apache-2.0   https://github.com/cockroachdb/redact/blob/v1.1.5/LICENSE
   github.com/davecgh/go-spew/spew                         ISC          https://github.com/davecgh/go-spew/blob/d8f796af33cc/LICENSE
   github.com/emicklei/go-restful/v3                       MIT          https://github.com/emicklei/go-restful/blob/v3.12.2/LICENSE
-  github.com/evanphx/json-patch                           BSD-3-Clause https://github.com/evanphx/json-patch/blob/v5.9.11/LICENSE
   github.com/fxamacker/cbor/v2                            MIT          https://github.com/fxamacker/cbor/blob/v2.9.0/LICENSE
   github.com/getsentry/sentry-go                          MIT          https://github.com/getsentry/sentry-go/blob/v0.27.0/LICENSE
   github.com/go-errors/errors                             MIT          https://github.com/go-errors/errors/blob/v1.5.1/LICENSE.MIT
@@ -63,7 +62,6 @@ SUMMARY (module — license type — source)
   github.com/rogpeppe/go-internal/fmtsort                 BSD-3-Clause https://github.com/rogpeppe/go-internal/blob/v1.14.1/LICENSE
   github.com/sergi/go-diff/diffmatchpatch                 MIT          https://github.com/sergi/go-diff/blob/5b0b94c5c0d3/LICENSE
   github.com/sethvargo/go-envconfig                       Apache-2.0   https://github.com/sethvargo/go-envconfig/blob/v1.3.0/LICENSE
-  github.com/shirou/gopsutil/v3                           BSD-3-Clause https://github.com/shirou/gopsutil/blob/v3.24.5/LICENSE
   github.com/spf13/pflag                                  BSD-3-Clause https://github.com/spf13/pflag/blob/v1.0.9/LICENSE
   github.com/stoewer/go-strcase                           MIT          https://github.com/stoewer/go-strcase/blob/v1.3.0/LICENSE
   github.com/swaggest/jsonschema-go                       MIT          https://github.com/swaggest/jsonschema-go/blob/v0.3.78/LICENSE
@@ -1258,39 +1256,6 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
---------------------------------------------------------------------------------
-Module:  github.com/evanphx/json-patch
-License: BSD-3-Clause
-Source:  https://github.com/evanphx/json-patch/blob/v5.9.11/LICENSE
---------------------------------------------------------------------------------
-
-Copyright (c) 2014, Evan Phoenix
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without 
-modification, are permitted provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright notice, this
-  list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright notice,
-  this list of conditions and the following disclaimer in the documentation
-  and/or other materials provided with the distribution.
-* Neither the name of the Evan Phoenix nor the names of its contributors 
-  may be used to endorse or promote products derived from this software 
-  without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE 
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER 
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 
 --------------------------------------------------------------------------------
 Module:  github.com/fxamacker/cbor/v2
@@ -5528,74 +5493,6 @@ Source:  https://github.com/sethvargo/go-envconfig/blob/v1.3.0/LICENSE
    See the License for the specific language governing permissions and
    limitations under the License.
 
-
---------------------------------------------------------------------------------
-Module:  github.com/shirou/gopsutil/v3
-License: BSD-3-Clause
-Source:  https://github.com/shirou/gopsutil/blob/v3.24.5/LICENSE
---------------------------------------------------------------------------------
-
-gopsutil is distributed under BSD license reproduced below.
-
-Copyright (c) 2014, WAKAYAMA Shirou
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification,
-are permitted provided that the following conditions are met:
-
- * Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
- * Neither the name of the gopsutil authors nor the names of its contributors
-   may be used to endorse or promote products derived from this software without
-   specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
-ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
-ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-
--------
-internal/common/binary.go in the gopsutil is copied and modified from golang/encoding/binary.go.
-
-
-
-Copyright (c) 2009 The Go Authors. All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are
-met:
-
-   * Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-   * Redistributions in binary form must reproduce the above
-copyright notice, this list of conditions and the following disclaimer
-in the documentation and/or other materials provided with the
-distribution.
-   * Neither the name of Google Inc. nor the names of its
-contributors may be used to endorse or promote products derived from
-this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 Module:  github.com/spf13/pflag
