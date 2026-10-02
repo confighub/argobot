@@ -28,6 +28,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: No personal names in committed files
+        run: ./scripts/verify-no-personal-names.sh
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
