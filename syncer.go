@@ -28,6 +28,10 @@ const (
 // Application name varies per event.
 type Syncer interface {
 	Sync(ctx context.Context, appName string) error
+	// RepoURLs lists the Applications the backend can see, mapping each name to
+	// the repoURLs of its source(s). It is how an event's Space is matched to the
+	// Applications that deploy from it.
+	RepoURLs(ctx context.Context) (map[string][]string, error)
 }
 
 // newSyncer builds the Syncer for the configured mode.

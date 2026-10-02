@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"slices"
+	"sort"
 
 	"github.com/confighub/sdk/core/worker/api"
 )
@@ -63,40 +65,80 @@ func subscriptionsForTargets(cfg config, discoveredTargetIDs []string) []api.Eve
 }
 
 // makeEventHandler returns the callback ConfigHub invokes for each delivered
-// fact. argobot reacts by syncing the corresponding Argo CD Application — a
+// fact. argobot reacts by syncing the corresponding Argo CD Applications — a
 // reaction, not a command it was told to run. A fact it cannot map to an
 // Application is logged and skipped.
 func makeEventHandler(syncer Syncer, cfg config) func(context.Context, api.EventLogEntry) {
 	return func(ctx context.Context, entry api.EventLogEntry) {
-		appName := resolveAppName(cfg, entry)
-		if appName == "" {
+		appNames := resolveAppNames(ctx, syncer, cfg, entry)
+		if len(appNames) == 0 {
+			if slug := eventSpaceSlug(entry); slug != "" {
+				log.Printf("[WARN] argobot: %s (space=%s target=%s cursor=%d) — no Argo app found for space %q; skipping.",
+					entry.EventType, entry.SpaceID, entry.TargetID, entry.CursorID, slug)
+				return
+			}
 			log.Printf("[WARN] argobot: %s (space=%s target=%s cursor=%d) — no Argo app resolved; skipping.",
 				entry.EventType, entry.SpaceID, entry.TargetID, entry.CursorID)
 			return
 		}
 
-		log.Printf("[INFO] argobot: %s (space=%s target=%s cursor=%d) → syncing Argo app %q",
-			entry.EventType, entry.SpaceID, entry.TargetID, entry.CursorID, appName)
+		for _, appName := range appNames {
+			log.Printf("[INFO] argobot: %s (space=%s target=%s cursor=%d) → syncing Argo app %q",
+				entry.EventType, entry.SpaceID, entry.TargetID, entry.CursorID, appName)
 
-		if err := syncer.Sync(ctx, appName); err != nil {
-			log.Printf("[ERROR] argobot: sync of %q failed: %v", appName, err)
-			return
+			if err := syncer.Sync(ctx, appName); err != nil {
+				log.Printf("[ERROR] argobot: sync of %q failed: %v", appName, err)
+				continue
+			}
+			log.Printf("[INFO] argobot: sync of %q triggered", appName)
 		}
-		log.Printf("[INFO] argobot: sync of %q triggered", appName)
 	}
 }
 
-// resolveAppName maps a delivered event to the Argo CD Application to sync.
+// resolveAppNames maps a delivered event to the Argo CD Applications to sync.
 // ArgoApp, when set, is the single Application every event targets. Otherwise the
-// event payload's SpaceSlug — the slug of the Space the fact is about — names the
-// Application, by the app-name == space-slug convention. Both apply.completed and
-// release.published carry SpaceSlug. (The payload's BundleBaseName is the Release
-// bundle's filename, which defaults to the Space ID, so it must not be used as
-// the app name.) An event that resolves to neither is left unhandled.
-func resolveAppName(cfg config, entry api.EventLogEntry) string {
+// event payload's SpaceSlug — the slug of the Space the fact is about — is matched
+// to every Application whose OCI source names that Space (.../space/<slug>), plus
+// the Application named after the slug, by the app-name == space-slug convention.
+// The source match finds Applications that kept the name Argo CD gave them when
+// they were moved onto ConfigHub. Each Application appears once, in name order.
+// Both apply.completed and release.published carry SpaceSlug. (The payload's
+// BundleBaseName is the Release bundle's filename, which defaults to the Space ID,
+// so it must not be used as the app name.) An event that resolves to nothing is
+// left unhandled.
+func resolveAppNames(ctx context.Context, syncer Syncer, cfg config, entry api.EventLogEntry) []string {
 	if cfg.ArgoApp != "" {
-		return cfg.ArgoApp
+		return []string{cfg.ArgoApp}
 	}
+	slug := eventSpaceSlug(entry)
+	if slug == "" {
+		return nil
+	}
+	apps, err := syncer.RepoURLs(ctx)
+	if err != nil {
+		// Without the list, fall back to the convention rather than drop the event.
+		log.Printf("[WARN] argobot: listing Argo apps for space %q failed: %v; trying the app named %q", slug, err, slug)
+		return []string{slug}
+	}
+	return appNamesForSpace(apps, slug)
+}
+
+// appNamesForSpace returns, in name order, the Applications in apps (name ->
+// source repoURLs) that are named slug or whose source repoURL names the Space slug.
+func appNamesForSpace(apps map[string][]string, slug string) []string {
+	var names []string
+	for name, repoURLs := range apps {
+		if name == slug || slices.ContainsFunc(repoURLs, func(u string) bool { return spaceSlugFromRepoURL(u) == slug }) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// eventSpaceSlug returns the SpaceSlug carried by the event payload, or "" when
+// the payload is absent or does not decode.
+func eventSpaceSlug(entry api.EventLogEntry) string {
 	var payload struct {
 		SpaceSlug string
 	}

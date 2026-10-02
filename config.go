@@ -18,8 +18,8 @@ import (
 // argobot reacts to ConfigHub event-log facts: it subscribes to apply and
 // release events (optionally scoped to one Space or Target) and force-syncs the
 // corresponding Argo CD Application. Which Application that is comes from ArgoApp
-// when set, otherwise from the event itself (a release carries its Space slug,
-// which by convention names the Application).
+// when set, otherwise from the event itself (its Space slug names every
+// Application whose OCI source is that Space, and the one named after it).
 type config struct {
 	ConfigHubURL string
 	WorkerID     string

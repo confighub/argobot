@@ -103,3 +103,63 @@ func (c *Client) Sync(ctx context.Context, appName string) error {
 	}
 	return nil
 }
+
+// RepoURLs lists the Argo CD Applications, mapping each name to the repoURLs of
+// its source(s): spec.source for a single-source Application and every
+// spec.sources entry for a multi-source one. An Application with no source still
+// appears, with no URLs. When AppNamespace is set the list is scoped to it.
+func (c *Client) RepoURLs(ctx context.Context) (map[string][]string, error) {
+	endpoint := c.server + "/api/v1/applications"
+	if c.appNamespace != "" {
+		endpoint += "?appNamespace=" + url.QueryEscape(c.appNamespace)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build list request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("call argo cd: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("argo cd list of applications returned %s: %s", resp.Status, string(body))
+	}
+
+	type source struct {
+		RepoURL string `json:"repoURL"`
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Spec struct {
+				Source  source   `json:"source"`
+				Sources []source `json:"sources"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, fmt.Errorf("decode application list: %w", err)
+	}
+
+	apps := make(map[string][]string, len(list.Items))
+	for _, item := range list.Items {
+		var urls []string
+		if item.Spec.Source.RepoURL != "" {
+			urls = append(urls, item.Spec.Source.RepoURL)
+		}
+		for _, src := range item.Spec.Sources {
+			if src.RepoURL != "" {
+				urls = append(urls, src.RepoURL)
+			}
+		}
+		apps[item.Metadata.Name] = urls
+	}
+	return apps, nil
+}
