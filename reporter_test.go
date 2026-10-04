@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	goclientnew "github.com/confighub/sdk/core/openapi/goclient-new"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -29,28 +30,28 @@ func TestProjectStatus(t *testing.T) {
 
 	got := projectStatus(u)
 
-	if got.Source != liveStatusSource {
-		t.Errorf("Source = %q, want %q", got.Source, liveStatusSource)
+	if got.Reporter != liveStatusReporter {
+		t.Errorf("Reporter = %q, want %q", got.Reporter, liveStatusReporter)
 	}
-	if got.App != "orders-prod" {
-		t.Errorf("App = %q, want orders-prod", got.App)
+	if got.DataSource != "orders-prod" {
+		t.Errorf("DataSource = %q, want orders-prod", got.DataSource)
 	}
-	if got.SyncStatus != "Synced" || got.Revision != "sha256:abc" {
+	if got.Sync != goclientnew.Synced || got.ReporterSync != "Synced" {
 		t.Errorf("sync fields wrong: %+v", got)
 	}
-	if got.HealthStatus != "Healthy" {
-		t.Errorf("HealthStatus = %q", got.HealthStatus)
+	if got.Health != goclientnew.ReleaseLiveStatusHealthHealthy || got.ReporterHealth != "Healthy" {
+		t.Errorf("health fields wrong: %+v", got)
 	}
-	if got.OperationPhase != "Succeeded" {
-		t.Errorf("OperationPhase = %q", got.OperationPhase)
+	if got.Operation != goclientnew.ReleaseLiveStatusOperationSucceeded || got.ReporterOperation != "Succeeded" {
+		t.Errorf("operation fields wrong: %+v", got)
 	}
 	// Health message is preferred over the operation message.
 	if got.Message != "all good" {
 		t.Errorf("Message = %q, want health message", got.Message)
 	}
-	// ObservedAt is left empty so the projection doubles as a dedup signature.
-	if got.ObservedAt != "" {
-		t.Errorf("ObservedAt = %q, want empty", got.ObservedAt)
+	// ObservedAt is left zero so the projection doubles as a dedup signature.
+	if !got.ObservedAt.IsZero() {
+		t.Errorf("ObservedAt = %v, want zero", got.ObservedAt)
 	}
 }
 
@@ -58,24 +59,51 @@ func TestProjectStatusFallsBackToOperationMessage(t *testing.T) {
 	u := app("api", map[string]any{
 		"sync":           map[string]any{"status": "OutOfSync"},
 		"health":         map[string]any{"status": "Degraded"},
-		"operationState": map[string]any{"phase": "Failed", "message": "boom"},
+		"operationState": map[string]any{"phase": "Error", "message": "boom"},
 	})
 	got := projectStatus(u)
 	if got.Message != "boom" {
 		t.Errorf("Message = %q, want operation message fallback", got.Message)
 	}
+	// Argo's Error is a failed operation, and its own word is kept.
+	if got.Operation != goclientnew.ReleaseLiveStatusOperationFailed || got.ReporterOperation != "Error" {
+		t.Errorf("operation fields wrong: %+v", got)
+	}
 }
 
 func TestProjectStatusMissingFields(t *testing.T) {
-	// A freshly created Application with no status yet must not panic and must
-	// project empty strings, still carrying Source and App.
+	// A freshly created Application with no status yet must not panic, and reads
+	// as unknown rather than as anything a gate would accept.
 	u := app("fresh", map[string]any{})
 	got := projectStatus(u)
-	if got.Source != liveStatusSource || got.App != "fresh" {
+	if got.Reporter != liveStatusReporter || got.DataSource != "fresh" {
 		t.Errorf("identity fields wrong: %+v", got)
 	}
-	if got.SyncStatus != "" || got.HealthStatus != "" || got.Message != "" {
-		t.Errorf("expected empty status fields, got %+v", got)
+	if got.Sync != goclientnew.Unknown || got.Health != goclientnew.ReleaseLiveStatusHealthUnknown ||
+		got.Operation != "" || got.Message != "" {
+		t.Errorf("expected unknown status, got %+v", got)
+	}
+}
+
+// A merge patch keeps a field it omits, so every field is sent, and an empty one
+// as null: an operation that has ended must stop reading as running.
+func TestMergePatchObjectNullsEmptyFields(t *testing.T) {
+	status := projectStatus(app("api", map[string]any{
+		"sync":   map[string]any{"status": "Synced"},
+		"health": map[string]any{"status": "Healthy"},
+	}))
+	got, err := mergePatchObject(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"Operation", "ReporterOperation", "Message"} {
+		value, present := got[field]
+		if !present || value != nil {
+			t.Errorf("%s = %v (present %v), want null", field, value, present)
+		}
+	}
+	if got["Sync"] != "Synced" || got["Reporter"] != liveStatusReporter {
+		t.Errorf("set fields wrong: %v", got)
 	}
 }
 
