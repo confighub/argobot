@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"reflect"
 	"strings"
 	"time"
 
@@ -30,32 +31,32 @@ const (
 	// liveStatusResync bounds how long a missed watch event can leave state
 	// stale: the informer relists at this interval.
 	liveStatusResync = 10 * time.Minute
-	// liveStatusMaxMessage caps the Message field so the encoded Status stays
-	// well within the 1024-byte Space-annotation limit.
-	liveStatusMaxMessage = 200
-	// liveStatusSource identifies argobot as the reporting client.
-	liveStatusSource = "argobot"
+	// liveStatusMaxMessage caps the Message field at the length ConfigHub accepts.
+	liveStatusMaxMessage = 1024
+	// liveStatusReporter identifies argobot as the reporting client.
+	liveStatusReporter = "argobot"
 	// ociSpacePathSep precedes the deployment Space slug in an Application's OCI
 	// source repoURL: .../space/<space-slug>.
 	ociSpacePathSep = "/space/"
 )
 
-// reporter watches Argo CD Application CRs and writes each one's live status
-// back to its ConfigHub deployment Space as the confighub.com/live-status
-// annotation.
+// reporter watches Argo CD Application CRs and writes each one's live status to
+// the ConfigHub Release the Application is running, as the Release's LiveStatus.
 //
-// Kubernetes watches cannot filter on annotations, so the reporter watches every
-// Application in the namespace and maps each to its Space in-process: the
-// Application's OCI source (.../space/<slug>) — equivalently its name — names the
-// deployment Space, and the slug is resolved to a Space id by a direct lookup
-// (the worker may read a Space it is the release bridge worker for, which is
-// exactly the deployment Spaces it reports on). An Application whose slug does
-// not resolve is ignored, which is also the filter for "an Application argobot is
+// Kubernetes watches cannot filter on what an Application deploys, so the
+// reporter watches every Application in the namespace and maps each to its
+// Release in-process. The Application's OCI source (.../space/<slug>), or
+// equivalently its name, names the deployment Space, and its synced revision is
+// the ManifestDigest of the Release it is running; the newest Release of the Space
+// with that ManifestDigest is the one. The worker can read the Spaces and Releases
+// of the Target it is granted on, and EditChildren on that Target lets it write
+// the Releases' LiveStatus. An Application whose Space or Release does not resolve
+// is ignored, which is also the filter for "an Application argobot is
 // responsible for".
 //
 // It is best-effort feedback, not control: a dropped or delayed report costs
 // only freshness. Writes are deduplicated against the last projection so an idle
-// Application produces no Space churn, and coalesced per Application so a sync's
+// Application produces no churn, and coalesced per Application so a sync's
 // burst of updates is one write.
 type reporter struct {
 	frontdoor *lib.WorkerFrontdoorClient
@@ -64,12 +65,15 @@ type reporter struct {
 	queue     workqueue.TypedRateLimitingInterface[string]
 
 	// lastSig deduplicates writes: appKey -> signature of the last projection
-	// written (the encoded Status with ObservedAt omitted).
+	// written (the Release and the encoded status with ObservedAt omitted).
 	lastSig map[string]string
 
-	// spaceIDs caches resolved deployment-Space slug -> id lookups. Touched only
-	// by the single worker goroutine, so it needs no lock.
-	spaceIDs map[string]uuid.UUID
+	// spaceIDs caches resolved deployment-Space slug -> id lookups, and
+	// releaseIDs resolved Space and manifest digest -> Release id lookups, which a
+	// Release's immutable content makes safe to keep. Touched only by the single
+	// worker goroutine, so they need no lock.
+	spaceIDs   map[string]uuid.UUID
+	releaseIDs map[string]uuid.UUID
 }
 
 // newReporter builds the live-status reporter: a dynamic Kubernetes client
@@ -89,26 +93,27 @@ func newReporter(cfg config) (*reporter, error) {
 		return nil, fmt.Errorf("worker frontdoor authentication failed")
 	}
 
-	// No label selector: annotations are not watch-filterable, so the reporter
-	// watches all Applications and filters in-process by Space ownership.
+	// No label selector: what an Application deploys is not watch-filterable, so
+	// the reporter watches all Applications and filters in-process.
 	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 		dyn, liveStatusResync, cfg.ArgoNamespace, nil)
 	informer := factory.ForResource(kube.ApplicationsGVR).Informer()
 
 	r := &reporter{
-		frontdoor: fc,
-		namespace: cfg.ArgoNamespace,
-		informer:  informer,
-		queue:     workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
-		lastSig:   make(map[string]string),
-		spaceIDs:  make(map[string]uuid.UUID),
+		frontdoor:  fc,
+		namespace:  cfg.ArgoNamespace,
+		informer:   informer,
+		queue:      workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
+		lastSig:    make(map[string]string),
+		spaceIDs:   make(map[string]uuid.UUID),
+		releaseIDs: make(map[string]uuid.UUID),
 	}
 
 	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj any) { r.enqueue(obj) },
 		UpdateFunc: func(_, obj any) { r.enqueue(obj) },
-		// DeleteFunc: clearing live-status when an Application is deleted is a
-		// follow-up; today a deleted Application leaves its last status in place.
+		// DeleteFunc: a deleted Application leaves its Release's last status in
+		// place, which still describes the Release as it was last seen running.
 	}); err != nil {
 		_ = fc.Close()
 		return nil, fmt.Errorf("register informer handler: %w", err)
@@ -173,8 +178,9 @@ func (r *reporter) enqueue(obj any) {
 }
 
 // report projects the current state of the Application named by key and, if it
-// changed since the last write, patches its Space's confighub.com/live-status
-// annotation. Applications whose Space this worker does not serve are ignored.
+// changed since the last write, writes it to the LiveStatus of the Release the
+// Application is running. Applications whose Space or Release this worker cannot
+// see are ignored.
 func (r *reporter) report(ctx context.Context, key string) error {
 	obj, exists, err := r.informer.GetStore().GetByKey(key)
 	if err != nil {
@@ -194,34 +200,44 @@ func (r *reporter) report(ctx context.Context, key string) error {
 	slug := deploymentSpaceSlug(u)
 	spaceID, known := r.getSpaceID(ctx, slug)
 	if !known {
-		// Slug did not resolve to a Space this worker can see — not ours.
+		// Slug did not resolve to a Space this worker can see -- not ours.
+		return nil
+	}
+	revision, _, _ := unstructured.NestedString(u.Object, "status", "sync", "revision")
+	if revision == "" {
+		// Argo has not resolved a revision yet, so there is no Release to report on.
+		return nil
+	}
+	releaseID, known, err := r.getReleaseID(ctx, spaceID, revision)
+	if err != nil {
+		return err
+	}
+	if !known {
+		// A revision that is no Release of the Space, such as one withdrawn and
+		// deleted: nothing to record it on.
 		return nil
 	}
 
 	status := projectStatus(u)
 
-	// Deduplicate on everything except ObservedAt (which changes every pass), so
-	// an unchanged Application produces no write and no Space revision churn.
-	sig, err := json.Marshal(status)
+	// Deduplicate on the Release and everything except ObservedAt (which changes
+	// every pass), so an unchanged Application produces no write.
+	encoded, err := json.Marshal(status)
 	if err != nil {
 		return fmt.Errorf("marshal status signature: %w", err)
 	}
-	if r.lastSig[key] == string(sig) {
+	sig := releaseID.String() + " " + string(encoded)
+	if r.lastSig[key] == sig {
 		return nil
 	}
 
-	status.ObservedAt = time.Now().UTC().Format(time.RFC3339)
-	payload, err := json.Marshal(status)
-	if err != nil {
-		return fmt.Errorf("marshal status: %w", err)
-	}
-
-	if err := r.patchSpace(ctx, spaceID, string(payload)); err != nil {
+	status.ObservedAt = time.Now().UTC()
+	if err := r.patchRelease(ctx, spaceID, releaseID, status); err != nil {
 		return err
 	}
-	r.lastSig[key] = string(sig)
-	log.Printf("[INFO] live-status: %s -> space %s (sync=%s health=%s)",
-		u.GetName(), spaceID, status.SyncStatus, status.HealthStatus)
+	r.lastSig[key] = sig
+	log.Printf("[INFO] live-status: %s -> release %s of space %s (sync=%s health=%s)",
+		u.GetName(), releaseID, spaceID, status.Sync, status.Health)
 	return nil
 }
 
@@ -240,11 +256,11 @@ func (r *reporter) client() (*goclientnew.ClientWithResponses, error) {
 	return c, nil
 }
 
-// getSpaceID resolves a deployment Space slug to its id, caching hits. The
-// worker identity may read a Space it is the release bridge worker for — exactly
-// the deployment Spaces it reports on — so a slug that resolves is by definition
-// one this worker is responsible for. A slug that does not resolve (not found,
-// or a Space the worker cannot see) is treated as not-ours and skipped.
+// getSpaceID resolves a deployment Space slug to its id, caching hits. The worker
+// can read the Spaces that release to the Target it is granted on, which are the
+// deployment Spaces it reports on, so a slug that resolves is one this worker is
+// responsible for. A slug that does not resolve (not found, or a Space the worker
+// cannot see) is treated as not-ours and skipped.
 func (r *reporter) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool) {
 	if slug == "" {
 		return uuid.Nil, false
@@ -280,37 +296,95 @@ func (r *reporter) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool
 	return uuid.Nil, false
 }
 
-// patchSpace merge-patches the confighub.com/live-status annotation onto the
-// Space. The worker identity is authorized because it is the Space's release
-// bridge worker.
-func (r *reporter) patchSpace(ctx context.Context, spaceID uuid.UUID, value string) error {
-	// Send a minimal merge patch of just the annotation. The generated body
-	// struct marshals its unset fields as JSON null (none are omitempty), and a
-	// merge patch reads null as "delete this field" — which would wipe Slug,
-	// ReleaseTargetID, and everything else on the Space. So hand-build the body
-	// with only Annotations. Merge-patch merges into the existing Annotations
-	// map, adding/updating confighub.com/live-status and leaving the rest intact.
-	patch, err := json.Marshal(map[string]any{
-		"Annotations": map[string]string{livestatus.Annotation: value},
-	})
-	if err != nil {
-		return fmt.Errorf("marshal space patch: %w", err)
+// getReleaseID resolves the Release of the Space whose ManifestDigest is the
+// revision Argo synced: the newest, should a republish of the same content have
+// made more than one. Hits are cached; a miss is not, since the Release may not
+// be listed yet.
+func (r *reporter) getReleaseID(ctx context.Context, spaceID uuid.UUID, manifestDigest string) (uuid.UUID, bool, error) {
+	cacheKey := spaceID.String() + "/" + manifestDigest
+	if id, ok := r.releaseIDs[cacheKey]; ok {
+		return id, true, nil
 	}
 	cub, err := r.client()
 	if err != nil {
-		return fmt.Errorf("patch space %s: %w", spaceID, err)
+		return uuid.Nil, false, fmt.Errorf("find the release of space %s with digest %s: %w", spaceID, manifestDigest, err)
 	}
-	resp, err := cub.PatchSpaceWithBodyWithResponse(
-		ctx, spaceID, &goclientnew.PatchSpaceParams{},
-		"application/merge-patch+json", bytes.NewReader(patch))
+	where := fmt.Sprintf("ManifestDigest = '%s'", manifestDigest)
+	selectFields := "ReleaseID,ReleaseNum,SpaceID,OrganizationID"
+	resp, err := cub.ListExtendedReleasesWithResponse(ctx, spaceID,
+		&goclientnew.ListExtendedReleasesParams{Where: &where, Select: &selectFields})
 	if err != nil {
-		return fmt.Errorf("patch space %s: %w", spaceID, err)
+		return uuid.Nil, false, fmt.Errorf("find the release of space %s with digest %s: %w", spaceID, manifestDigest, err)
 	}
 	if resp.JSON200 == nil {
-		return fmt.Errorf("patch space %s: unexpected HTTP %d: %s",
-			spaceID, resp.HTTPResponse.StatusCode, string(resp.Body))
+		return uuid.Nil, false, fmt.Errorf("find the release of space %s with digest %s: unexpected HTTP %d: %s",
+			spaceID, manifestDigest, resp.HTTPResponse.StatusCode, string(resp.Body))
+	}
+	var newest *goclientnew.Release
+	for _, er := range *resp.JSON200 {
+		if er.Release != nil && (newest == nil || er.Release.ReleaseNum > newest.ReleaseNum) {
+			newest = er.Release
+		}
+	}
+	if newest == nil {
+		return uuid.Nil, false, nil
+	}
+	r.releaseIDs[cacheKey] = newest.ReleaseID
+	return newest.ReleaseID, true, nil
+}
+
+// patchRelease writes status as the Release's LiveStatus. The worker is
+// authorized by EditChildren on the Release's Target.
+func (r *reporter) patchRelease(ctx context.Context, spaceID, releaseID uuid.UUID, status goclientnew.ReleaseLiveStatus) error {
+	liveStatus, err := mergePatchObject(status)
+	if err != nil {
+		return fmt.Errorf("encode the live status of release %s: %w", releaseID, err)
+	}
+	// Only LiveStatus is sent: a merge patch reads every other field it carries,
+	// and the generated body would carry them all.
+	patch, err := json.Marshal(map[string]any{"LiveStatus": liveStatus})
+	if err != nil {
+		return fmt.Errorf("encode the live status of release %s: %w", releaseID, err)
+	}
+	cub, err := r.client()
+	if err != nil {
+		return fmt.Errorf("patch release %s: %w", releaseID, err)
+	}
+	resp, err := cub.PatchReleaseWithBodyWithResponse(
+		ctx, spaceID, releaseID, &goclientnew.PatchReleaseParams{},
+		"application/merge-patch+json", bytes.NewReader(patch))
+	if err != nil {
+		return fmt.Errorf("patch release %s: %w", releaseID, err)
+	}
+	if resp.JSON200 == nil {
+		return fmt.Errorf("patch release %s: unexpected HTTP %d: %s",
+			releaseID, resp.HTTPResponse.StatusCode, string(resp.Body))
 	}
 	return nil
+}
+
+// mergePatchObject encodes a status for a merge patch. The generated struct omits
+// its empty fields, and a merge patch keeps whatever a field it omits held, so an
+// operation that has ended would go on reading as running. Every field the status
+// has is therefore sent, and an empty one as null, which removes it.
+func mergePatchObject(status goclientnew.ReleaseLiveStatus) (map[string]any, error) {
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		return nil, err
+	}
+	present := map[string]any{}
+	if err := json.Unmarshal(encoded, &present); err != nil {
+		return nil, err
+	}
+	all := map[string]any{}
+	for _, field := range reflect.VisibleFields(reflect.TypeOf(status)) {
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		all[name] = present[name]
+	}
+	return all, nil
 }
 
 // deploymentSpaceSlug returns the deployment Space slug an Application belongs to:
@@ -339,13 +413,12 @@ func spaceSlugFromRepoURL(repoURL string) string {
 	return slug
 }
 
-// projectStatus reads the Argo Application's status subresource into a
-// livestatus.Status. ObservedAt is left empty here so the result doubles as a
-// stable dedup signature; the caller stamps it before writing.
-func projectStatus(u *unstructured.Unstructured) livestatus.Status {
+// projectStatus reads the Argo Application's status subresource into a Release
+// LiveStatus. ObservedAt is left zero here so the result doubles as a stable dedup
+// signature; the caller stamps it before writing.
+func projectStatus(u *unstructured.Unstructured) goclientnew.ReleaseLiveStatus {
 	obj := u.Object
 	syncStatus, _, _ := unstructured.NestedString(obj, "status", "sync", "status")
-	revision, _, _ := unstructured.NestedString(obj, "status", "sync", "revision")
 	healthStatus, _, _ := unstructured.NestedString(obj, "status", "health", "status")
 	healthMsg, _, _ := unstructured.NestedString(obj, "status", "health", "message")
 	opPhase, _, _ := unstructured.NestedString(obj, "status", "operationState", "phase")
@@ -357,19 +430,15 @@ func projectStatus(u *unstructured.Unstructured) livestatus.Status {
 		msg = opMsg
 	}
 
-	return livestatus.Status{
-		Source:         liveStatusSource,
-		App:            u.GetName(),
-		SyncStatus:     syncStatus,
-		HealthStatus:   healthStatus,
-		OperationPhase: opPhase,
-		Revision:       revision,
-		Message:        truncate(msg, liveStatusMaxMessage),
-	}
+	status := livestatus.FromArgoCD(syncStatus, healthStatus, opPhase)
+	status.Reporter = liveStatusReporter
+	status.DataSource = u.GetName()
+	status.Message = truncate(msg, liveStatusMaxMessage)
+	return status
 }
 
 // truncate shortens s to at most n bytes, appending an ellipsis marker when it
-// cuts. Kept byte-oriented since the concern is the annotation size limit.
+// cuts. Kept byte-oriented since the limit ConfigHub checks is in bytes.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
