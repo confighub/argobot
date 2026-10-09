@@ -153,6 +153,13 @@ spec:
                   name: argobot-secrets
                   key: CONFIGHUB_WORKER_SECRET
 
+            # ── Controller ───────────────────────────────────────────────────
+            # "argocd" (default) drives Argo CD Applications. "sveltos" drives
+            # Sveltos profiles instead and needs different RBAC; deploy
+            # manifests/sveltos/argobot.yaml for it.
+            - name: GITOPS_CONTROLLER
+              value: "argocd"
+
             # ── Sync mode ────────────────────────────────────────────────────
             # "kubernetes" (default) patches the Application's refresh annotation
             # via the Kubernetes API (deploys only if auto-sync is enabled);

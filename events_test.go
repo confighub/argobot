@@ -124,11 +124,13 @@ func TestAppNamesForSpace(t *testing.T) {
 		"b": {"oci://gw/space/app-dev-2"},
 		"c": {"oci://gw/space/"},
 		"d": {"oci://gw/space/app-dev/extra"},
+		// Sveltos profiles keep the tag in the URL.
+		"team-a/e": {"oci://gw/space/app-dev-2:latest"},
 	}
 	if got, want := appNamesForSpace(apps, "app-dev"), []string{"a"}; !slices.Equal(got, want) {
 		t.Errorf("appNamesForSpace(app-dev) = %v, want %v", got, want)
 	}
-	if got, want := appNamesForSpace(apps, "app-dev-2"), []string{"b"}; !slices.Equal(got, want) {
+	if got, want := appNamesForSpace(apps, "app-dev-2"), []string{"b", "team-a/e"}; !slices.Equal(got, want) {
 		t.Errorf("appNamesForSpace(app-dev-2) = %v, want %v", got, want)
 	}
 }

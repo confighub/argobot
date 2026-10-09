@@ -17,13 +17,18 @@ import (
 //
 // argobot reacts to ConfigHub event-log facts: it subscribes to apply and
 // release events (optionally scoped to one Space or Target) and force-syncs the
-// corresponding Argo CD Application. Which Application that is comes from ArgoApp
-// when set, otherwise from the event itself (its Space slug names every
-// Application whose OCI source is that Space, and the one named after it).
+// corresponding Argo CD Application or Sveltos profile. Which one that is comes
+// from ArgoApp when set (Argo CD only), otherwise from the event itself (its
+// Space slug names every Application or profile whose OCI source is that Space,
+// and the one named after it).
 type config struct {
 	ConfigHubURL string
 	WorkerID     string
 	WorkerSecret string
+
+	// Controller selects the GitOps controller argobot drives: "argocd"
+	// (default) or "sveltos". The Argo* settings below apply to Argo CD only.
+	Controller string
 
 	// ArgoSyncMode selects how argobot triggers a sync: "kubernetes" (default)
 	// patches the Application's refresh annotation via the Kubernetes API;
@@ -70,6 +75,7 @@ func loadConfig() (config, error) {
 		ConfigHubURL:     os.Getenv("CONFIGHUB_URL"),
 		WorkerID:         os.Getenv("CONFIGHUB_WORKER_ID"),
 		WorkerSecret:     os.Getenv("CONFIGHUB_WORKER_SECRET"),
+		Controller:       os.Getenv("GITOPS_CONTROLLER"),
 		ArgoSyncMode:     os.Getenv("ARGO_SYNC_MODE"),
 		ArgoServer:       strings.TrimRight(os.Getenv("ARGOCD_SERVER"), "/"),
 		ArgoToken:        os.Getenv("ARGOCD_AUTH_TOKEN"),
@@ -88,6 +94,9 @@ func loadConfig() (config, error) {
 	if cfg.SubscriptionName == "" {
 		cfg.SubscriptionName = "argobot"
 	}
+	if cfg.Controller == "" {
+		cfg.Controller = ControllerArgoCD
+	}
 	if cfg.ArgoSyncMode == "" {
 		cfg.ArgoSyncMode = SyncModeKubernetes
 	}
@@ -103,16 +112,29 @@ func loadConfig() (config, error) {
 		"CONFIGHUB_WORKER_ID":     cfg.WorkerID,
 		"CONFIGHUB_WORKER_SECRET": cfg.WorkerSecret,
 	}
-	switch cfg.ArgoSyncMode {
-	case SyncModeKubernetes:
+	switch cfg.Controller {
+	case ControllerArgoCD:
+		switch cfg.ArgoSyncMode {
+		case SyncModeKubernetes:
+			// No extra required vars: in-cluster credentials come from the
+			// ServiceAccount, and ARGO_NAMESPACE has a default.
+		case SyncModeArgoCD:
+			required["ARGOCD_SERVER"] = cfg.ArgoServer
+			required["ARGOCD_AUTH_TOKEN"] = cfg.ArgoToken
+		default:
+			return config{}, fmt.Errorf("invalid ARGO_SYNC_MODE %q: must be %q or %q",
+				cfg.ArgoSyncMode, SyncModeKubernetes, SyncModeArgoCD)
+		}
+	case ControllerSveltos:
 		// No extra required vars: in-cluster credentials come from the
-		// ServiceAccount, and ARGO_NAMESPACE has a default.
-	case SyncModeArgoCD:
-		required["ARGOCD_SERVER"] = cfg.ArgoServer
-		required["ARGOCD_AUTH_TOKEN"] = cfg.ArgoToken
+		// ServiceAccount. The ARGO_*/ARGOCD_* settings are Argo-only; clear them so
+		// none of them, ARGO_APP above all, changes what a Sveltos deployment syncs.
+		cfg.ArgoSyncMode, cfg.ArgoApp, cfg.ArgoAppNamespace = "", "", ""
+		cfg.ArgoServer, cfg.ArgoToken, cfg.ArgoNamespace, cfg.ArgoRefreshType = "", "", "", ""
+		cfg.ArgoInsecure, cfg.ArgoPrune, cfg.ArgoForce = false, false, false
 	default:
-		return config{}, fmt.Errorf("invalid ARGO_SYNC_MODE %q: must be %q or %q",
-			cfg.ArgoSyncMode, SyncModeKubernetes, SyncModeArgoCD)
+		return config{}, fmt.Errorf("invalid GITOPS_CONTROLLER %q: must be %q or %q",
+			cfg.Controller, ControllerArgoCD, ControllerSveltos)
 	}
 
 	var missing []string
