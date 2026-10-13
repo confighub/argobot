@@ -16,18 +16,15 @@ import (
 // Event types argobot reacts to. ConfigHub's event vocabulary is open-ended and
 // owned by the server, so — like the API spec and the SDK — argobot names the
 // ones it cares about itself rather than relying on shared constants.
-const (
-	eventTypeApplyCompleted   = "apply.completed"
-	eventTypeReleasePublished = "release.published"
-)
+const eventTypeReleasePublished = "release.published"
 
-// subscriptions is what argobot's Channel should subscribe to: the apply and
-// release facts, for every Space and Target. It is the default an operator
+// subscriptions is what argobot's Channel should subscribe to: the release
+// facts, for every Space and Target. It is the default an operator
 // creates the Channel with (`argobot --print-subscriptions`), and narrows on
 // the Channel by adding a SpaceID or TargetID, or more entries, with cub.
 func subscriptions() []goclientnew.EventSubscription {
 	return []goclientnew.EventSubscription{
-		{EventTypes: []string{eventTypeApplyCompleted, eventTypeReleasePublished}},
+		{EventTypes: []string{eventTypeReleasePublished}},
 	}
 }
 
@@ -41,7 +38,7 @@ func makeEventHandler(syncer Syncer, cfg config) func(context.Context, *goclient
 	return func(ctx context.Context, event *goclientnew.EventLog) {
 		where := eventWhere(event)
 		switch event.EventType {
-		case eventTypeApplyCompleted, eventTypeReleasePublished:
+		case eventTypeReleasePublished:
 		default:
 			log.Printf("[WARN] argobot: %s (%s) — not an event argobot reacts to; skipping. Narrow the channel's subscriptions.",
 				event.EventType, where)
@@ -89,7 +86,7 @@ func eventWhere(event *goclientnew.EventLog) string {
 // the Application named after the slug, by the app-name == space-slug convention.
 // The source match finds Applications that kept the name Argo CD gave them when
 // they were moved onto ConfigHub. Each Application appears once, in name order.
-// Both apply.completed and release.published carry SpaceSlug. (The payload's
+// release.published carries SpaceSlug. (The payload's
 // BundleBaseName is the Release bundle's filename, which defaults to the Space ID,
 // so it must not be used as the app name.) An event that resolves to nothing is
 // left unhandled.

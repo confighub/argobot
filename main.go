@@ -5,7 +5,7 @@
 //
 // It listens on a ConfigHub Channel: it claims the Channel as the service
 // account whose key it holds and polls it, force-syncing the corresponding Argo CD Application
-// whenever ConfigHub delivers an apply or a release the Channel subscribes to.
+// whenever ConfigHub delivers a release the Channel subscribes to.
 // This makes a deploy feel immediate instead of waiting for Argo's next
 // reconciliation.
 //

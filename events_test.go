@@ -54,11 +54,6 @@ func TestResolveAppNames(t *testing.T) {
 			want:  []string{"nonprod-argobot"},
 		},
 		{
-			name:  "apply payload resolves via SpaceSlug",
-			entry: event(eventTypeApplyCompleted, payload(map[string]any{"SpaceSlug": "nonprod-argocd"})),
-			want:  []string{"nonprod-argocd"},
-		},
-		{
 			name:  "ArgoApp override wins over payload",
 			cfg:   config{ArgoApp: "pinned-app"},
 			entry: event(eventTypeReleasePublished, payload(map[string]any{"SpaceSlug": "nonprod-argobot"})),
@@ -96,7 +91,7 @@ func TestResolveAppNames(t *testing.T) {
 		},
 		{
 			name:  "nil payload resolves to none",
-			entry: event(eventTypeApplyCompleted, nil),
+			entry: event(eventTypeReleasePublished, nil),
 			want:  nil,
 		},
 	}
@@ -144,8 +139,8 @@ func TestSubscriptions(t *testing.T) {
 		t.Fatalf("len = %d, want 1", len(subs))
 	}
 	got := subs[0].EventTypes
-	if len(got) != 2 || got[0] != eventTypeApplyCompleted || got[1] != eventTypeReleasePublished {
-		t.Fatalf("EventTypes = %v, want [%s %s]", got, eventTypeApplyCompleted, eventTypeReleasePublished)
+	if len(got) != 1 || got[0] != eventTypeReleasePublished {
+		t.Fatalf("EventTypes = %v, want [%s]", got, eventTypeReleasePublished)
 	}
 	if subs[0].SpaceID != nil || subs[0].TargetID != nil {
 		t.Fatalf("default subscription is scoped: %+v", subs[0])
@@ -274,7 +269,7 @@ func TestMakeEventHandler(t *testing.T) {
 	t.Run("unresolvable event is skipped", func(t *testing.T) {
 		syncer := &fakeSyncer{}
 		handler := makeEventHandler(syncer, config{})
-		handler(context.Background(), event(eventTypeApplyCompleted, nil))
+		handler(context.Background(), event(eventTypeReleasePublished, nil))
 		if len(syncer.synced) != 0 {
 			t.Fatalf("synced = %v, want none", syncer.synced)
 		}
@@ -285,11 +280,11 @@ func TestMakeEventHandler(t *testing.T) {
 		log.SetOutput(&buf)
 		t.Cleanup(func() { log.SetOutput(os.Stderr) })
 		syncer := &fakeSyncer{}
-		makeEventHandler(syncer, config{ArgoApp: "pinned-app"})(context.Background(), event("unit.updated", payload("s")))
+		makeEventHandler(syncer, config{ArgoApp: "pinned-app"})(context.Background(), event("apply.completed", payload("s")))
 		if len(syncer.synced) != 0 {
 			t.Fatalf("synced = %v, want none", syncer.synced)
 		}
-		if !strings.Contains(buf.String(), "unit.updated") {
+		if !strings.Contains(buf.String(), "apply.completed") {
 			t.Fatalf("log = %q, want a WARN naming the event type", buf.String())
 		}
 	})
@@ -297,7 +292,7 @@ func TestMakeEventHandler(t *testing.T) {
 	t.Run("ArgoApp override is synced", func(t *testing.T) {
 		syncer := &fakeSyncer{}
 		handler := makeEventHandler(syncer, config{ArgoApp: "pinned-app"})
-		handler(context.Background(), event(eventTypeApplyCompleted, payload("ignored-slug")))
+		handler(context.Background(), event(eventTypeReleasePublished, payload("ignored-slug")))
 		if got := syncer.synced; len(got) != 1 || got[0] != "pinned-app" {
 			t.Fatalf("synced = %v, want [pinned-app]", got)
 		}

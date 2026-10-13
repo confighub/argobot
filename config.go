@@ -16,8 +16,8 @@ import (
 // it listens on. The Argo CD credentials are argobot's own authority against
 // Argo CD — held out of band, never brokered through ConfigHub.
 //
-// argobot reacts to the ConfigHub events its Channel subscribes to: apply and
-// release facts, scoped on the Channel to whatever Spaces or Targets the
+// argobot reacts to the ConfigHub events its Channel subscribes to: release
+// facts, scoped on the Channel to whatever Spaces or Targets the
 // operator chose. It force-syncs the corresponding Argo CD Application or
 // Sveltos profile, which comes from ArgoApp when set (Argo CD only), otherwise
 // from the event itself (its Space slug names every Application or profile
