@@ -3,15 +3,18 @@
 
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // setBaseEnv sets the always-required ConfigHub vars and clears the mode/Argo
 // vars so each case starts from a known state.
 func setBaseEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("CONFIGHUB_URL", "https://hub.example.com")
-	t.Setenv("CONFIGHUB_WORKER_ID", "worker")
-	t.Setenv("CONFIGHUB_WORKER_SECRET", "secret")
+	t.Setenv("CONFIGHUB_AUTH_PRIVATE_KEY", `{"kty":"OKP","crv":"Ed25519","x":"x","d":"d"}`)
+	t.Setenv("CONFIGHUB_CHANNEL", "my-cluster/argobot")
 	for _, k := range []string{
 		"GITOPS_CONTROLLER", "ARGO_SYNC_MODE", "ARGOCD_SERVER", "ARGOCD_AUTH_TOKEN",
 		"ARGO_NAMESPACE", "ARGO_REFRESH_TYPE", "ARGO_APP",
@@ -60,6 +63,22 @@ func TestLoadConfigModes(t *testing.T) {
 		t.Setenv("ARGOCD_AUTH_TOKEN", "token")
 		if _, err := loadConfig(); err != nil {
 			t.Fatalf("loadConfig() error = %v", err)
+		}
+	})
+
+	t.Run("the key is required", func(t *testing.T) {
+		setBaseEnv(t)
+		t.Setenv("CONFIGHUB_AUTH_PRIVATE_KEY", "")
+		if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "CONFIGHUB_AUTH_PRIVATE_KEY") {
+			t.Fatalf("loadConfig() error = %v, want missing CONFIGHUB_AUTH_PRIVATE_KEY", err)
+		}
+	})
+
+	t.Run("the channel is required", func(t *testing.T) {
+		setBaseEnv(t)
+		t.Setenv("CONFIGHUB_CHANNEL", "")
+		if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "CONFIGHUB_CHANNEL") {
+			t.Fatalf("loadConfig() error = %v, want missing CONFIGHUB_CHANNEL", err)
 		}
 	})
 

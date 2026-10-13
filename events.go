@@ -5,86 +5,59 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"slices"
 	"sort"
+	"strconv"
 
-	"github.com/confighub/sdk/core/worker/api"
+	goclientnew "github.com/confighub/sdk/core/openapi/goclient-new"
 )
 
 // Event types argobot reacts to. ConfigHub's event vocabulary is open-ended and
 // owned by the server, so — like the API spec and the SDK — argobot names the
 // ones it cares about itself rather than relying on shared constants.
-const (
-	eventTypeApplyCompleted   = "apply.completed"
-	eventTypeReleasePublished = "release.published"
-)
+const eventTypeReleasePublished = "release.published"
 
-// subscriptionsForTargets builds the event-log subscriptions argobot consumes:
-// apply and release facts, scoped to the Targets argobot reacts to. Each
-// subscription's Name is the cursor name that keys argobot's server-stored
-// delivery cursor, so a restart resumes where it left off.
-//
-// Scoping precedence:
-//   - EventTargetID set — an explicit override: a single subscription scoped to
-//     that one Target, and discoveredTargetIDs is ignored. Its Name is the plain
-//     SubscriptionName, preserving the cursor of a deployment that pinned a
-//     Target before auto-discovery existed.
-//   - discoveredTargetIDs non-empty — one subscription per Target the worker is
-//     granted ViewChildren on, so argobot reacts to exactly its own targets. Each
-//     Name is suffixed with the Target ID to give it an independent cursor.
-//   - neither — a single unscoped subscription (every Target). This is the
-//     fallback when a worker is granted on no Targets; argobot stays useful
-//     rather than going silent, at the cost of reacting org-wide.
-//
-// EventSpaceID, when set, further narrows every subscription (AND semantics).
-func subscriptionsForTargets(cfg config, discoveredTargetIDs []string) []api.EventSubscription {
-	eventTypes := []string{eventTypeApplyCompleted, eventTypeReleasePublished}
-	sub := func(name, targetID string) api.EventSubscription {
-		return api.EventSubscription{
-			Name:       name,
-			EventTypes: eventTypes,
-			SpaceID:    cfg.EventSpaceID,
-			TargetID:   targetID,
-		}
-	}
-
-	switch {
-	case cfg.EventTargetID != "":
-		return []api.EventSubscription{sub(cfg.SubscriptionName, cfg.EventTargetID)}
-	case len(discoveredTargetIDs) == 0:
-		return []api.EventSubscription{sub(cfg.SubscriptionName, "")}
-	default:
-		subs := make([]api.EventSubscription, 0, len(discoveredTargetIDs))
-		for _, id := range discoveredTargetIDs {
-			subs = append(subs, sub(cfg.SubscriptionName+"-"+id, id))
-		}
-		return subs
+// subscriptions is what argobot's Channel should subscribe to: the release
+// facts, for every Space and Target. It is the default an operator
+// creates the Channel with (`argobot --print-subscriptions`), and narrows on
+// the Channel by adding a SpaceID or TargetID, or more entries, with cub.
+func subscriptions() []goclientnew.EventSubscription {
+	return []goclientnew.EventSubscription{
+		{EventTypes: []string{eventTypeReleasePublished}},
 	}
 }
 
-// makeEventHandler returns the callback ConfigHub invokes for each delivered
-// fact. argobot reacts by syncing the corresponding Argo CD Applications — a
-// reaction, not a command it was told to run. A fact it cannot map to an
-// Application is logged and skipped.
-func makeEventHandler(syncer Syncer, cfg config) func(context.Context, api.EventLogEntry) {
-	return func(ctx context.Context, entry api.EventLogEntry) {
-		appNames := resolveAppNames(ctx, syncer, cfg, entry)
+// makeEventHandler returns the callback the Channel listener invokes for each
+// delivered event. argobot reacts by syncing the corresponding Argo CD
+// Applications — a reaction, not a command it was told to run. An event of a
+// type argobot does not react to, which a Channel subscribed more widely than
+// subscriptions() would deliver, is logged and skipped, as is a fact it cannot
+// map to an Application.
+func makeEventHandler(syncer Syncer, cfg config) func(context.Context, *goclientnew.EventLog) {
+	return func(ctx context.Context, event *goclientnew.EventLog) {
+		where := eventWhere(event)
+		switch event.EventType {
+		case eventTypeReleasePublished:
+		default:
+			log.Printf("[WARN] argobot: %s (%s) — not an event argobot reacts to; skipping. Narrow the channel's subscriptions.",
+				event.EventType, where)
+			return
+		}
+
+		appNames := resolveAppNames(ctx, syncer, cfg, event)
 		if len(appNames) == 0 {
-			if slug := eventSpaceSlug(entry); slug != "" {
-				log.Printf("[WARN] argobot: %s (space=%s target=%s cursor=%d) — no Argo app found for space %q; skipping.",
-					entry.EventType, entry.SpaceID, entry.TargetID, entry.CursorID, slug)
+			if slug := eventSpaceSlug(event); slug != "" {
+				log.Printf("[WARN] argobot: %s (%s) — no Argo app found for space %q; skipping.",
+					event.EventType, where, slug)
 				return
 			}
-			log.Printf("[WARN] argobot: %s (space=%s target=%s cursor=%d) — no Argo app resolved; skipping.",
-				entry.EventType, entry.SpaceID, entry.TargetID, entry.CursorID)
+			log.Printf("[WARN] argobot: %s (%s) — no Argo app resolved; skipping.", event.EventType, where)
 			return
 		}
 
 		for _, appName := range appNames {
-			log.Printf("[INFO] argobot: %s (space=%s target=%s cursor=%d) → syncing Argo app %q",
-				entry.EventType, entry.SpaceID, entry.TargetID, entry.CursorID, appName)
+			log.Printf("[INFO] argobot: %s (%s) → syncing Argo app %q", event.EventType, where, appName)
 
 			if err := syncer.Sync(ctx, appName); err != nil {
 				log.Printf("[ERROR] argobot: sync of %q failed: %v", appName, err)
@@ -95,6 +68,17 @@ func makeEventHandler(syncer Syncer, cfg config) func(context.Context, api.Event
 	}
 }
 
+// eventWhere describes an event's position and scope for the log.
+func eventWhere(event *goclientnew.EventLog) string {
+	id := func(u *goclientnew.UUID) string {
+		if u == nil {
+			return ""
+		}
+		return u.String()
+	}
+	return "space=" + id(event.SpaceID) + " target=" + id(event.TargetID) + " cursor=" + strconv.FormatInt(event.CursorID, 10)
+}
+
 // resolveAppNames maps a delivered event to the Argo CD Applications to sync.
 // ArgoApp, when set, is the single Application every event targets. Otherwise the
 // event payload's SpaceSlug — the slug of the Space the fact is about — is matched
@@ -102,15 +86,15 @@ func makeEventHandler(syncer Syncer, cfg config) func(context.Context, api.Event
 // the Application named after the slug, by the app-name == space-slug convention.
 // The source match finds Applications that kept the name Argo CD gave them when
 // they were moved onto ConfigHub. Each Application appears once, in name order.
-// Both apply.completed and release.published carry SpaceSlug. (The payload's
+// release.published carries SpaceSlug. (The payload's
 // BundleBaseName is the Release bundle's filename, which defaults to the Space ID,
 // so it must not be used as the app name.) An event that resolves to nothing is
 // left unhandled.
-func resolveAppNames(ctx context.Context, syncer Syncer, cfg config, entry api.EventLogEntry) []string {
+func resolveAppNames(ctx context.Context, syncer Syncer, cfg config, event *goclientnew.EventLog) []string {
 	if cfg.ArgoApp != "" {
 		return []string{cfg.ArgoApp}
 	}
-	slug := eventSpaceSlug(entry)
+	slug := eventSpaceSlug(event)
 	if slug == "" {
 		return nil
 	}
@@ -137,13 +121,13 @@ func appNamesForSpace(apps map[string][]string, slug string) []string {
 }
 
 // eventSpaceSlug returns the SpaceSlug carried by the event payload, or "" when
-// the payload is absent or does not decode.
-func eventSpaceSlug(entry api.EventLogEntry) string {
-	var payload struct {
-		SpaceSlug string
+// the payload is absent or is not an object with one. The generated client
+// decodes the payload as a generic JSON value, so it is read as a map.
+func eventSpaceSlug(event *goclientnew.EventLog) string {
+	payload, ok := event.Payload.(map[string]any)
+	if !ok {
+		return ""
 	}
-	if err := json.Unmarshal(entry.Payload, &payload); err == nil {
-		return payload.SpaceSlug
-	}
-	return ""
+	slug, _ := payload["SpaceSlug"].(string)
+	return slug
 }

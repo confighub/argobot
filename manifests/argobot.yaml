@@ -12,8 +12,8 @@
 # band (your secret store / External Secrets, or `kubectl create secret generic
 # argobot-secrets --from-literal=...`). Keeping credential material out of this
 # manifest lets it float through GitOps without shipping or overwriting secrets.
-# Expected keys: CONFIGHUB_WORKER_ID, CONFIGHUB_WORKER_SECRET, and — only when
-# ARGO_SYNC_MODE=argocd — ARGOCD_AUTH_TOKEN.
+# Expected keys: CONFIGHUB_AUTH_PRIVATE_KEY (the service account's private JWK)
+# and — only when ARGO_SYNC_MODE=argocd — ARGOCD_AUTH_TOKEN.
 #
 # argobot runs in its own `argobot` namespace; its RBAC to sync Argo CD
 # Applications lives in the `argocd` namespace (assumed to already exist — this
@@ -142,16 +142,16 @@ spec:
             # ── ConfigHub connection (required) ──────────────────────────────
             - name: CONFIGHUB_URL
               value: "https://hub.confighub.com"
-            - name: CONFIGHUB_WORKER_ID
+            # The service account key argobot authenticates with: a private
+            # JWK, as `cub serviceaccount key add --generate` writes it.
+            - name: CONFIGHUB_AUTH_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:
                   name: argobot-secrets
-                  key: CONFIGHUB_WORKER_ID
-            - name: CONFIGHUB_WORKER_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: argobot-secrets
-                  key: CONFIGHUB_WORKER_SECRET
+                  key: CONFIGHUB_AUTH_PRIVATE_KEY
+            # Only for a server whose CONFIGHUB_ASSERTION_AUDIENCE is not the default.
+            # - name: CONFIGHUB_ASSERTION_AUDIENCE
+            #   value: ""
 
             # ── Controller ───────────────────────────────────────────────────
             # "argocd" (default) drives Argo CD Applications. "sveltos" drives
@@ -194,17 +194,12 @@ spec:
             # - name: ARGO_FORCE
             #   value: "false"
 
-            # ── Event subscription ───────────────────────────────────────────
-            # Keys the server-held delivery cursor; keep it stable across restarts.
-            - name: CONFIGHUB_SUBSCRIPTION_NAME
-              value: "argobot"
-            # By default argobot scopes to the Targets its worker is the bridge
-            # for (discovered at startup). CONFIGHUB_EVENT_TARGET_ID overrides
-            # that with one Target; CONFIGHUB_EVENT_SPACE_ID narrows to one Space.
-            # - name: CONFIGHUB_EVENT_SPACE_ID
-            #   value: ""
-            # - name: CONFIGHUB_EVENT_TARGET_ID
-            #   value: ""
+            # ── Channel ──────────────────────────────────────────────────────
+            # The ConfigHub Channel argobot claims and polls, as <space>/<slug>
+            # or a UUID. Which events it delivers (and for which Spaces and
+            # Targets) is the Channel's Subscriptions, set with cub, not here.
+            - name: CONFIGHUB_CHANNEL
+              value: "my-cluster/argobot"
 
             # ── Application resolution ───────────────────────────────────────
             # Pin one Application for every event. Absent = resolve from the
@@ -213,9 +208,8 @@ spec:
             #   value: "my-app"
 
             # ── Live-status reporting ────────────────────────────────────────
-            # argobot also watches Argo CD Applications labeled
-            # confighub.com/space-id and reports their sync/health back to the
-            # deployment Space as the confighub.com/live-status annotation. On by
+            # argobot also watches Argo CD Applications and reports each one's
+            # sync/health back to the ConfigHub Release it is running. On by
             # default; set to "false" to disable. Needs Kubernetes access (the
             # ServiceAccount above already grants it).
             # - name: CONFIGHUB_REPORT_LIVE_STATUS

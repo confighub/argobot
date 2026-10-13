@@ -3,27 +3,43 @@
 
 // Command argobot is a ConfigHub bot that force-syncs Argo CD applications.
 //
-// It is an event-log consumer: it authenticates to ConfigHub with a worker
-// identity and long-polls the event log, force-syncing the corresponding Argo CD
-// Application whenever ConfigHub records an apply or a release. This makes a
-// deploy feel immediate instead of waiting for Argo's next reconciliation.
+// It listens on a ConfigHub Channel: it claims the Channel as the service
+// account whose key it holds and polls it, force-syncing the corresponding Argo CD Application
+// whenever ConfigHub delivers a release the Channel subscribes to.
+// This makes a deploy feel immediate instead of waiting for Argo's next
+// reconciliation.
 //
-// argobot is a pure consumer — it holds no lease and dequeues no operations, so
-// it never contends with any Target's work. Its reaction (force-sync) is its
-// own; the event only says the desired state for a (space, target) changed.
+// argobot handles no commands yet, so a Channel it listens on declares none.
+// Its reaction (force-sync) is its own; the event only says the desired state
+// for a (space, target) changed.
+//
+// With --print-subscriptions it prints the Subscriptions its Channel should
+// have, for `cub channel create ... --subscriptions -`.
 package main
 
 import (
 	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
 	"log"
 	"os/signal"
 	"syscall"
 
-	"github.com/confighub/sdk/core/worker"
+	"github.com/confighub/sdk/core/channel"
+	"github.com/confighub/sdk/core/cubapi"
 	"golang.org/x/sync/errgroup"
 )
 
 func main() {
+	printSubscriptions := flag.Bool("print-subscriptions", false, "print the Channel subscriptions argobot expects and exit")
+	flag.Parse()
+	if *printSubscriptions {
+		encoded, _ := json.MarshalIndent(subscriptions(), "", "  ")
+		fmt.Println(string(encoded))
+		return
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("[FATAL] %v", err)
@@ -37,42 +53,28 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Scope delivery to the worker's own Targets unless CONFIGHUB_EVENT_TARGET_ID
-	// overrides. Discovery uses the same worker credentials as the event consumer.
-	var discovered []string
-	if cfg.EventTargetID == "" {
-		discovered, err = discoverWorkerTargets(ctx, cfg)
-		if err != nil {
-			log.Fatalf("[FATAL] discovering worker targets: %v", err)
-		}
-		if len(discovered) == 0 {
-			log.Printf("[WARN] argobot: worker is granted ViewChildren on no Targets; subscribing to every Target. " +
-				"Set CONFIGHUB_EVENT_TARGET_ID to scope explicitly.")
-		}
-	}
-	subs := subscriptionsForTargets(cfg, discovered)
-
-	handler := makeEventHandler(syncer, cfg)
-	log.Printf("[INFO] argobot starting; consuming events from %s (subscription %q, space=%q, %d subscription(s))",
-		cfg.ConfigHubURL, cfg.SubscriptionName, cfg.EventSpaceID, len(subs))
-	for _, sub := range subs {
-		log.Printf("[INFO] argobot: subscription %q scoped to target=%q", sub.Name, sub.TargetID)
+	hub, err := newHubClient(ctx, cfg)
+	if err != nil {
+		log.Fatalf("[FATAL] %v", err)
 	}
 
-	// One consumer per subscription; each holds its own long-poll connection and
-	// cursor. If any stops with an error, cancel the rest and exit.
+	// Concurrency one: argobot runs no commands, and events are handled in
+	// delivery order on the poll goroutine regardless.
+	listener := channel.NewListener(hub, cubapi.ParseRef(cfg.Channel), channel.Options{Concurrency: 1}).
+		OnEvent(makeEventHandler(syncer, cfg))
+
 	g, gctx := errgroup.WithContext(ctx)
-	for _, sub := range subs {
-		consumer := worker.NewEventConsumer(cfg.ConfigHubURL, cfg.WorkerID, cfg.WorkerSecret, sub, handler)
-		g.Go(func() error { return consumer.Run(gctx) })
-	}
+	g.Go(func() error {
+		log.Printf("[INFO] argobot starting; listening on channel %s at %s", cfg.Channel, cfg.ConfigHubURL)
+		return listener.Run(gctx)
+	})
 
-	// Alongside consuming events, optionally watch Argo CD Applications and report
+	// Alongside the channel, optionally watch Argo CD Applications and report
 	// their live status back to ConfigHub. It needs Kubernetes access; if the
 	// client cannot be built (e.g. argocd sync mode with no cluster access), skip
 	// it with a warning rather than failing the bot.
 	if cfg.ReportLiveStatus {
-		if rep, err := newReporter(cfg); err != nil {
+		if rep, err := newReporter(cfg, hub); err != nil {
 			log.Printf("[WARN] live-status reporting disabled: %v", err)
 		} else {
 			log.Printf("[INFO] argobot: live-status reporting enabled")
@@ -81,7 +83,30 @@ func main() {
 	}
 
 	if err := g.Wait(); err != nil && ctx.Err() == nil {
-		log.Fatalf("[FATAL] event consumer stopped: %v", err)
+		log.Fatalf("[FATAL] %v", err)
 	}
 	log.Printf("[INFO] argobot shutting down")
+}
+
+// newHubClient builds the one ConfigHub client argobot uses, as the service
+// account whose key it holds. Each session is bought with a short-lived
+// assertion signed by that key, so nothing replayable crosses the wire. The
+// client authenticates once here, so a bad key fails the start, and renews its
+// session on a 401 for as long as the process runs.
+func newHubClient(ctx context.Context, cfg config) (*cubapi.Client, error) {
+	signer, err := cubapi.NewAssertionSigner([]byte(cfg.PrivateKey), "", cfg.AssertionAudience)
+	if err != nil {
+		return nil, fmt.Errorf("CONFIGHUB_AUTH_PRIVATE_KEY: %w", err)
+	}
+	authenticate := cubapi.AssertionAuthenticator(cfg.ConfigHubURL, signer)
+	session, err := authenticate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("authenticating to %s with key %s: %w", cfg.ConfigHubURL, signer.Kid(), err)
+	}
+	return cubapi.NewClient(cubapi.ClientOptions{
+		ServerURL:     cfg.ConfigHubURL,
+		Session:       session,
+		Authenticator: authenticate,
+		UserAgent:     "argobot",
+	})
 }

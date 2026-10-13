@@ -13,8 +13,8 @@
 # The Deployment reads its credentials from a Secret named argobot-secrets via
 # secretKeyRef. That Secret is deliberately NOT defined here: supply it out of
 # band (your secret store / External Secrets, or `kubectl create secret generic
-# argobot-secrets --from-literal=...`). Expected keys: CONFIGHUB_WORKER_ID and
-# CONFIGHUB_WORKER_SECRET.
+# argobot-secrets --from-literal=...`). Expected key: CONFIGHUB_AUTH_PRIVATE_KEY
+# (the service account's private JWK).
 #
 # The release workflow publishes only manifests/*.yaml as the config bundle, so
 # this variant is not part of ghcr.io/confighub/configs/argobot.
@@ -232,16 +232,16 @@ spec:
             # ── ConfigHub connection (required) ──────────────────────────────
             - name: CONFIGHUB_URL
               value: "https://hub.confighub.com"
-            - name: CONFIGHUB_WORKER_ID
+            # The service account key argobot authenticates with: a private
+            # JWK, as `cub serviceaccount key add --generate` writes it.
+            - name: CONFIGHUB_AUTH_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:
                   name: argobot-secrets
-                  key: CONFIGHUB_WORKER_ID
-            - name: CONFIGHUB_WORKER_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: argobot-secrets
-                  key: CONFIGHUB_WORKER_SECRET
+                  key: CONFIGHUB_AUTH_PRIVATE_KEY
+            # Only for a server whose CONFIGHUB_ASSERTION_AUDIENCE is not the default.
+            # - name: CONFIGHUB_ASSERTION_AUDIENCE
+            #   value: ""
 
             # ── Controller ───────────────────────────────────────────────────
             # "sveltos" forces a redeploy by patching the profile's
@@ -250,17 +250,12 @@ spec:
             - name: GITOPS_CONTROLLER
               value: "sveltos"
 
-            # ── Event subscription ───────────────────────────────────────────
-            # Keys the server-held delivery cursor; keep it stable across restarts.
-            - name: CONFIGHUB_SUBSCRIPTION_NAME
-              value: "argobot"
-            # By default argobot scopes to the Targets its worker is the bridge
-            # for (discovered at startup). CONFIGHUB_EVENT_TARGET_ID overrides
-            # that with one Target; CONFIGHUB_EVENT_SPACE_ID narrows to one Space.
-            # - name: CONFIGHUB_EVENT_SPACE_ID
-            #   value: ""
-            # - name: CONFIGHUB_EVENT_TARGET_ID
-            #   value: ""
+            # ── Channel ──────────────────────────────────────────────────────
+            # The ConfigHub Channel argobot claims and polls, as <space>/<slug>
+            # or a UUID. Which events it delivers (and for which Spaces and
+            # Targets) is the Channel's Subscriptions, set with cub, not here.
+            - name: CONFIGHUB_CHANNEL
+              value: "my-cluster/argobot"
 
             # ── Live-status reporting ────────────────────────────────────────
             # argobot watches the HealthCheckReports the HealthCheck above

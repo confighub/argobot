@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/confighub/argobot/kube"
+	"github.com/confighub/sdk/core/cubapi"
 	"github.com/confighub/sdk/core/livestatus"
 	goclientnew "github.com/confighub/sdk/core/openapi/goclient-new"
-	"github.com/confighub/sdk/core/worker/lib"
 	"github.com/google/uuid"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic/dynamicinformer"
@@ -48,9 +48,9 @@ const (
 // Release in-process. The Application's OCI source (.../space/<slug>), or
 // equivalently its name, names the deployment Space, and its synced revision is
 // the ManifestDigest of the Release it is running; the newest Release of the Space
-// with that ManifestDigest is the one. The worker can read the Spaces and Releases
-// of the Target it is granted on, and EditChildren on that Target lets it write
-// the Releases' LiveStatus. An Application whose Space or Release does not resolve
+// with that ManifestDigest is the one. argobot's identity can read the Spaces and
+// Releases of the Target it is granted on, and EditChildren on that Target lets it
+// write the Releases' LiveStatus. An Application whose Space or Release does not resolve
 // is ignored, which is also the filter for "an Application argobot is
 // responsible for".
 //
@@ -82,46 +82,30 @@ type statusReporter interface {
 	Run(ctx context.Context) error
 }
 
-// newReporter builds the live-status reporter for the configured controller.
-func newReporter(cfg config) (statusReporter, error) {
+// newReporter builds the live-status reporter for the configured controller,
+// writing through hub, the ConfigHub client argobot shares with its channel
+// listener.
+func newReporter(cfg config, hub *cubapi.Client) (statusReporter, error) {
 	if cfg.Controller == ControllerSveltos {
-		return newSveltosReporter(cfg)
+		return newSveltosReporter(cfg, hub)
 	}
-	return newArgoReporter(cfg)
+	return newArgoReporter(cfg, hub)
 }
 
-// liveStatusWriter writes a Release's LiveStatus to ConfigHub under the worker
-// identity. Both reporters embed it.
+// liveStatusWriter writes a Release's LiveStatus to ConfigHub as argobot's
+// identity, through the client its listener uses. Both reporters embed it.
 type liveStatusWriter struct {
-	frontdoor *lib.WorkerFrontdoorClient
-}
-
-// newLiveStatusWriter authenticates once to fail fast on bad credentials. The
-// client itself is deliberately not cached — see liveStatusWriter.client.
-func newLiveStatusWriter(cfg config) (liveStatusWriter, error) {
-	fc := lib.NewWorkerFrontdoorClient(cfg.ConfigHubURL, "", cfg.WorkerID, cfg.WorkerSecret)
-	if fc.GetClient() == nil {
-		_ = fc.Close()
-		return liveStatusWriter{}, fmt.Errorf("worker frontdoor authentication failed")
-	}
-	return liveStatusWriter{frontdoor: fc}, nil
+	api *goclientnew.ClientWithResponses
 }
 
 // newArgoReporter builds the Argo CD live-status reporter: a dynamic Kubernetes
-// client (in-cluster or kubeconfig), a ConfigHub API client under the worker
-// identity, and an unfiltered informer over Argo Applications in the configured
-// namespace.
-func newArgoReporter(cfg config) (*reporter, error) {
+// client (in-cluster or kubeconfig) and an unfiltered informer over Argo
+// Applications in the configured namespace.
+func newArgoReporter(cfg config, hub *cubapi.Client) (*reporter, error) {
 	dyn, err := kube.NewDynamicClient()
 	if err != nil {
 		return nil, err
 	}
-
-	writer, err := newLiveStatusWriter(cfg)
-	if err != nil {
-		return nil, err
-	}
-	fc := writer.frontdoor
 
 	// No label selector: what an Application deploys is not watch-filterable, so
 	// the reporter watches all Applications and filters in-process.
@@ -130,7 +114,7 @@ func newArgoReporter(cfg config) (*reporter, error) {
 	informer := factory.ForResource(kube.ApplicationsGVR).Informer()
 
 	r := &reporter{
-		liveStatusWriter: writer,
+		liveStatusWriter: liveStatusWriter{api: hub.API},
 		namespace:        cfg.ArgoNamespace,
 		informer:         informer,
 		queue:            workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
@@ -145,7 +129,6 @@ func newArgoReporter(cfg config) (*reporter, error) {
 		// DeleteFunc: a deleted Application leaves its Release's last status in
 		// place, which still describes the Release as it was last seen running.
 	}); err != nil {
-		_ = fc.Close()
 		return nil, fmt.Errorf("register informer handler: %w", err)
 	}
 
@@ -154,8 +137,6 @@ func newArgoReporter(cfg config) (*reporter, error) {
 
 // Run starts the informer and a single worker, blocking until ctx is cancelled.
 func (r *reporter) Run(ctx context.Context) error {
-	defer r.frontdoor.Close()
-
 	go r.informer.Run(ctx.Done())
 	if !cache.WaitForCacheSync(ctx.Done(), r.informer.HasSynced) {
 		if ctx.Err() != nil {
@@ -209,8 +190,8 @@ func (r *reporter) enqueue(obj any) {
 
 // report projects the current state of the Application named by key and, if it
 // changed since the last write, writes it to the LiveStatus of the Release the
-// Application is running. Applications whose Space or Release this worker cannot
-// see are ignored.
+// Application is running. Applications whose Space or Release argobot cannot see
+// are ignored.
 func (r *reporter) report(ctx context.Context, key string) error {
 	obj, exists, err := r.informer.GetStore().GetByKey(key)
 	if err != nil {
@@ -230,7 +211,7 @@ func (r *reporter) report(ctx context.Context, key string) error {
 	slug := deploymentSpaceSlug(u)
 	spaceID, known := r.getSpaceID(ctx, slug)
 	if !known {
-		// Slug did not resolve to a Space this worker can see -- not ours.
+		// Slug did not resolve to a Space argobot can see -- not ours.
 		return nil
 	}
 	revision, _, _ := unstructured.NestedString(u.Object, "status", "sync", "revision")
@@ -271,26 +252,11 @@ func (r *reporter) report(ctx context.Context, key string) error {
 	return nil
 }
 
-// client returns the frontdoor's current ConfigHub client. It must be called per
-// request rather than cached: the frontdoor refreshes the worker JWT on a timer,
-// and a refresh builds a *new* client bound to the new token instead of mutating
-// the old one in place. A cached client therefore keeps sending the token it was
-// created with, and starts failing with 401 "token is expired" for the process's
-// remaining lifetime once that token's 24h TTL runs out. This is a cheap
-// RLock-guarded read of an existing client — it triggers no authentication.
-func (r *liveStatusWriter) client() (*goclientnew.ClientWithResponses, error) {
-	c := r.frontdoor.GetClient()
-	if c == nil {
-		return nil, fmt.Errorf("no authenticated ConfigHub client")
-	}
-	return c, nil
-}
-
-// getSpaceID resolves a deployment Space slug to its id, caching hits. The worker
+// getSpaceID resolves a deployment Space slug to its id, caching hits. argobot
 // can read the Spaces that release to the Target it is granted on, which are the
-// deployment Spaces it reports on, so a slug that resolves is one this worker is
-// responsible for. A slug that does not resolve (not found, or a Space the worker
-// cannot see) is treated as not-ours and skipped.
+// deployment Spaces it reports on, so a slug that resolves is one it is
+// responsible for. A slug that does not resolve (not found, or a Space it cannot
+// see) is treated as not-ours and skipped.
 func (r *reporter) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool) {
 	if slug == "" {
 		return uuid.Nil, false
@@ -299,14 +265,8 @@ func (r *reporter) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool
 		return id, true
 	}
 
-	cub, err := r.client()
-	if err != nil {
-		log.Printf("[WARN] live-status reporter: resolve space %q: %v", slug, err)
-		return uuid.Nil, false
-	}
-
 	where := fmt.Sprintf("Slug = '%s'", slug)
-	resp, err := cub.ListSpacesWithResponse(ctx, &goclientnew.ListSpacesParams{Where: &where})
+	resp, err := r.api.ListSpacesWithResponse(ctx, &goclientnew.ListSpacesParams{Where: &where})
 	if err != nil {
 		log.Printf("[WARN] live-status reporter: resolve space %q: %v", slug, err)
 		return uuid.Nil, false
@@ -335,13 +295,9 @@ func (r *reporter) getReleaseID(ctx context.Context, spaceID uuid.UUID, manifest
 	if id, ok := r.releaseIDs[cacheKey]; ok {
 		return id, true, nil
 	}
-	cub, err := r.client()
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("find the release of space %s with digest %s: %w", spaceID, manifestDigest, err)
-	}
 	where := fmt.Sprintf("ManifestDigest = '%s'", manifestDigest)
 	selectFields := "ReleaseID,ReleaseNum,SpaceID,OrganizationID"
-	resp, err := cub.ListExtendedReleasesWithResponse(ctx, spaceID,
+	resp, err := r.api.ListExtendedReleasesWithResponse(ctx, spaceID,
 		&goclientnew.ListExtendedReleasesParams{Where: &where, Select: &selectFields})
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("find the release of space %s with digest %s: %w", spaceID, manifestDigest, err)
@@ -363,8 +319,8 @@ func (r *reporter) getReleaseID(ctx context.Context, spaceID uuid.UUID, manifest
 	return newest.ReleaseID, true, nil
 }
 
-// patchRelease writes status as the Release's LiveStatus. The worker is
-// authorized by EditChildren on the Release's Target.
+// patchRelease writes status as the Release's LiveStatus. argobot is authorized
+// by EditChildren on the Release's Target.
 func (r *liveStatusWriter) patchRelease(ctx context.Context, spaceID, releaseID uuid.UUID, status goclientnew.ReleaseLiveStatus) error {
 	liveStatus, err := mergePatchObject(status)
 	if err != nil {
@@ -376,11 +332,7 @@ func (r *liveStatusWriter) patchRelease(ctx context.Context, spaceID, releaseID 
 	if err != nil {
 		return fmt.Errorf("encode the live status of release %s: %w", releaseID, err)
 	}
-	cub, err := r.client()
-	if err != nil {
-		return fmt.Errorf("patch release %s: %w", releaseID, err)
-	}
-	resp, err := cub.PatchReleaseWithBodyWithResponse(
+	resp, err := r.api.PatchReleaseWithBodyWithResponse(
 		ctx, spaceID, releaseID, &goclientnew.PatchReleaseParams{},
 		"application/merge-patch+json", bytes.NewReader(patch))
 	if err != nil {

@@ -21,6 +21,7 @@ import (
 
 	"github.com/confighub/argobot/kube"
 	"github.com/confighub/argobot/sveltos"
+	"github.com/confighub/sdk/core/cubapi"
 	goclientnew "github.com/confighub/sdk/core/openapi/goclient-new"
 	"github.com/google/uuid"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -124,16 +125,12 @@ type sveltosReporter struct {
 }
 
 // newSveltosReporter builds the Sveltos live-status reporter: a dynamic
-// Kubernetes client (in-cluster or kubeconfig), a ConfigHub API client under the
-// worker identity, and informers over HealthCheckReports and ClusterSummaries in
-// every namespace (where Sveltos puts a remote cluster's reports is not fixed).
-func newSveltosReporter(cfg config) (*sveltosReporter, error) {
+// Kubernetes client (in-cluster or kubeconfig) and informers over
+// HealthCheckReports and ClusterSummaries in every namespace (where Sveltos puts
+// a remote cluster's reports is not fixed), writing through hub, the ConfigHub
+// client argobot shares with its channel listener.
+func newSveltosReporter(cfg config, hub *cubapi.Client) (*sveltosReporter, error) {
 	dyn, err := kube.NewDynamicClient()
-	if err != nil {
-		return nil, err
-	}
-
-	writer, err := newLiveStatusWriter(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +138,7 @@ func newSveltosReporter(cfg config) (*sveltosReporter, error) {
 	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 		dyn, liveStatusResync, metav1.NamespaceAll, nil)
 	r := &sveltosReporter{
-		liveStatusWriter: writer,
+		liveStatusWriter: liveStatusWriter{api: hub.API},
 		reports:          factory.ForResource(sveltos.HealthCheckReportsGVR).Informer(),
 		summaries:        factory.ForResource(sveltos.ClusterSummariesGVR).Informer(),
 		queue:            workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
@@ -156,7 +153,6 @@ func newSveltosReporter(cfg config) (*sveltosReporter, error) {
 		// DeleteFunc: a deleted report leaves its Releases' last status in place,
 		// which still describes them as they were last seen running.
 	}); err != nil {
-		_ = writer.frontdoor.Close()
 		return nil, fmt.Errorf("register HealthCheckReport informer handler: %w", err)
 	}
 	// A ClusterSummary carries the sync and operation of its cluster's reports.
@@ -164,7 +160,6 @@ func newSveltosReporter(cfg config) (*sveltosReporter, error) {
 		AddFunc:    func(obj any) { r.enqueueClusterReports(obj) },
 		UpdateFunc: func(_, obj any) { r.enqueueClusterReports(obj) },
 	}); err != nil {
-		_ = writer.frontdoor.Close()
 		return nil, fmt.Errorf("register ClusterSummary informer handler: %w", err)
 	}
 
@@ -173,8 +168,6 @@ func newSveltosReporter(cfg config) (*sveltosReporter, error) {
 
 // Run starts the informers and a single worker, blocking until ctx is cancelled.
 func (r *sveltosReporter) Run(ctx context.Context) error {
-	defer r.frontdoor.Close()
-
 	go r.reports.Run(ctx.Done())
 	go r.summaries.Run(ctx.Done())
 	if !cache.WaitForCacheSync(ctx.Done(), r.reports.HasSynced, r.summaries.HasSynced) {
@@ -339,11 +332,7 @@ func (r *sveltosReporter) findRelease(ctx context.Context, spaceID uuid.UUID, re
 	if len(revisions) == 0 {
 		return uuid.Nil, false, nil
 	}
-	cub, err := r.client()
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("list the releases of space %s: %w", spaceID, err)
-	}
-
+	cub := r.api
 	selectFields := "ReleaseID,ReleaseNum,Published,SpaceID,OrganizationID"
 	resp, err := cub.ListExtendedReleasesWithResponse(ctx, spaceID,
 		&goclientnew.ListExtendedReleasesParams{Select: &selectFields})
@@ -392,10 +381,7 @@ func (r *sveltosReporter) releaseBundleRevisions(ctx context.Context, spaceID, r
 	if revs, ok := r.bundleRevisions[releaseID]; ok {
 		return revs, nil
 	}
-	cub, err := r.client()
-	if err != nil {
-		return nil, fmt.Errorf("read the bundle of release %s: %w", releaseID, err)
-	}
+	cub := r.api
 	resp, err := cub.DownloadReleaseDataWithResponse(ctx, spaceID, releaseID)
 	if err != nil {
 		return nil, fmt.Errorf("read the bundle of release %s: %w", releaseID, err)
