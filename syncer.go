@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/confighub/argobot/argo"
+	"github.com/confighub/argobot/flux"
 	"github.com/confighub/argobot/kube"
 	"github.com/confighub/argobot/sveltos"
 )
@@ -21,6 +22,10 @@ const (
 	// redeploy by patching their profile.projectsveltos.io/redeploy annotation,
 	// and reports live status from Sveltos HealthCheckReports.
 	ControllerSveltos = "sveltos"
+	// ControllerFlux drives Flux OCIRepositories: it forces a reconciliation by
+	// patching their reconcile.fluxcd.io/requestedAt annotation, and reports
+	// live status from the Kustomizations that apply them.
+	ControllerFlux = "flux"
 )
 
 // Sync modes selectable via ARGO_SYNC_MODE.
@@ -34,11 +39,12 @@ const (
 	SyncModeArgoCD = "argocd"
 )
 
-// Syncer triggers a sync of a single Argo CD Application or Sveltos profile. The
-// Kubernetes and Argo CD REST backends implement it for Argo CD, and the sveltos
-// backend for Sveltos; the event handler is agnostic to which is in use.
-// Per-backend tunables are bound at construction, so only the Application (or
-// profile) name varies per event.
+// Syncer triggers a sync of a single Argo CD Application, Sveltos profile or
+// Flux OCIRepository. The Kubernetes and Argo CD REST backends implement it for
+// Argo CD, the sveltos backend for Sveltos and the flux backend for Flux; the
+// event handler is agnostic to which is in use. Per-backend tunables are bound
+// at construction, so only the Application (or profile, or repository) name
+// varies per event.
 type Syncer interface {
 	Sync(ctx context.Context, appName string) error
 	// RepoURLs lists the Applications the backend can see, mapping each name to
@@ -49,8 +55,11 @@ type Syncer interface {
 
 // newSyncer builds the Syncer for the configured controller and mode.
 func newSyncer(cfg config) (Syncer, error) {
-	if cfg.Controller == ControllerSveltos {
+	switch cfg.Controller {
+	case ControllerSveltos:
 		return sveltos.NewSyncer()
+	case ControllerFlux:
+		return flux.NewSyncer(flux.Config{Namespace: cfg.FluxNamespace})
 	}
 	switch cfg.ArgoSyncMode {
 	case SyncModeArgoCD:

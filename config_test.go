@@ -17,7 +17,7 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("CONFIGHUB_CHANNEL", "my-cluster/argobot")
 	for _, k := range []string{
 		"GITOPS_CONTROLLER", "ARGO_SYNC_MODE", "ARGOCD_SERVER", "ARGOCD_AUTH_TOKEN",
-		"ARGO_NAMESPACE", "ARGO_REFRESH_TYPE", "ARGO_APP",
+		"ARGO_NAMESPACE", "ARGO_REFRESH_TYPE", "ARGO_APP", "FLUX_NAMESPACE",
 	} {
 		t.Setenv(k, "")
 	}
@@ -108,9 +108,35 @@ func TestLoadConfigModes(t *testing.T) {
 		}
 	})
 
-	t.Run("unknown controller is rejected", func(t *testing.T) {
+	t.Run("flux needs no Argo settings and ignores them", func(t *testing.T) {
 		setBaseEnv(t)
 		t.Setenv("GITOPS_CONTROLLER", "flux")
+		// An invalid Argo mode and a pinned Argo app must not affect Flux.
+		t.Setenv("ARGO_SYNC_MODE", "bogus")
+		t.Setenv("ARGO_APP", "pinned-app")
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("loadConfig() error = %v", err)
+		}
+		if cfg.Controller != ControllerFlux {
+			t.Errorf("Controller = %q, want %q", cfg.Controller, ControllerFlux)
+		}
+		if cfg.ArgoApp != "" || cfg.ArgoSyncMode != "" || cfg.ArgoNamespace != "" {
+			t.Errorf("Argo settings kept under Flux: %+v", cfg)
+		}
+		if cfg.FluxNamespace != "flux-system" {
+			t.Errorf("FluxNamespace = %q, want %q", cfg.FluxNamespace, "flux-system")
+		}
+
+		t.Setenv("FLUX_NAMESPACE", "gitops")
+		if cfg, err := loadConfig(); err != nil || cfg.FluxNamespace != "gitops" {
+			t.Errorf("FLUX_NAMESPACE=gitops: FluxNamespace = %q, err = %v", cfg.FluxNamespace, err)
+		}
+	})
+
+	t.Run("unknown controller is rejected", func(t *testing.T) {
+		setBaseEnv(t)
+		t.Setenv("GITOPS_CONTROLLER", "bogus")
 		if _, err := loadConfig(); err == nil {
 			t.Fatal("loadConfig() error = nil, want invalid controller error")
 		}
