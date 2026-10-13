@@ -146,6 +146,40 @@ cub variant upload --component argobot --variant base --granularity per-file \
   oci://ghcr.io/confighub/configs/argobot
 ```
 
+## Upgrading from 0.1
+
+argobot 0.1 connected as a Bridge worker and chose its own subscriptions. 0.2 listens on a Channel as a service account and reads none of the worker variables, so the two need different ConfigHub objects and a different Secret. The order below keeps the 0.1 argobot running until the 0.2 one works, and every step but the last is reversible. `my-cluster` is the Space holding the Target the worker is granted on.
+
+```sh
+# 1. The identity: a service account, a key for argobot, and a token for
+#    Argo CD if it pulls from ConfigHub's OCI registry with the worker's
+#    credentials. The token is printed once.
+cub serviceaccount create argobot-my-cluster
+cub serviceaccount key add argobot-my-cluster --generate argobot-my-cluster
+cub serviceaccount token create argobot-my-cluster
+
+# 2. The grants the worker has, now for the service account too. The worker
+#    keeps its own.
+cub target update target --space my-cluster \
+  --permission View:serviceaccount:argobot-my-cluster \
+  --permission ViewChildren:serviceaccount:argobot-my-cluster \
+  --permission EditChildren:serviceaccount:argobot-my-cluster
+
+# 3. The Channel. --print-subscriptions needs the 0.2 binary; run it from the
+#    image. If the 0.1 argobot had CONFIGHUB_EVENT_TARGET_ID set, scope the
+#    subscriptions to that Target as described under Setup.
+docker run --rm ghcr.io/confighub/argobot:latest --print-subscriptions \
+  | cub channel create argobot --space my-cluster \
+      --subscriptions - --permission Claim:serviceaccount:argobot-my-cluster
+```
+
+4. **Argo CD's pull credentials.** If Argo CD's repo-creds Secret for the ConfigHub registry carries the worker ID and secret, set its `username` to `token` and its `password` to the token from step 1. Argo CD reads the Secret at its next pull, and the token is already valid, so no pull fails.
+5. **argobot's Secret.** Add `CONFIGHUB_AUTH_PRIVATE_KEY`, the contents of the `.jwk` file from step 1, to `argobot-secrets`. The 0.1 argobot ignores it.
+6. **The rollout.** Move the Deployment to the 0.2 image, set `CONFIGHUB_CHANNEL=my-cluster/argobot`, and drop the worker and subscription variables (left in place, they only warn). A one-replica Deployment keeps the 0.1 pod until the 0.2 pod is Ready, so a missing key or Claim shows up as a crash-looping new pod beside a working old one, and reverting the Deployment undoes it. `cub channel get argobot --space my-cluster` shows when the 0.2 argobot holds the Channel.
+7. **The worker.** Once the Channel is held, delete the worker with `cub worker delete`. This is the one step the rest cannot undo.
+
+A kind cluster from `cub cluster up` of an earlier cub is simpler to recreate than to upgrade: `cub cluster down --name <name> --delete-config`, then `cub cluster up --name <name>` with the new cub, which creates the service account and the Channel itself. `--delete-config` also deletes the deployment Spaces bound to that cluster.
+
 ## Build and release
 
 ```sh
