@@ -59,7 +59,7 @@ const (
 // Application produces no churn, and coalesced per Application so a sync's
 // burst of updates is one write.
 type reporter struct {
-	frontdoor *lib.WorkerFrontdoorClient
+	liveStatusWriter
 	namespace string
 	informer  cache.SharedIndexInformer
 	queue     workqueue.TypedRateLimitingInterface[string]
@@ -76,22 +76,52 @@ type reporter struct {
 	releaseIDs map[string]uuid.UUID
 }
 
-// newReporter builds the live-status reporter: a dynamic Kubernetes client
-// (in-cluster or kubeconfig), a ConfigHub API client under the worker identity,
-// and an unfiltered informer over Argo Applications in the configured namespace.
-func newReporter(cfg config) (*reporter, error) {
+// statusReporter is a running live-status reporter: the Argo CD reporter
+// below, or the Sveltos one (reporter_sveltos.go).
+type statusReporter interface {
+	Run(ctx context.Context) error
+}
+
+// newReporter builds the live-status reporter for the configured controller.
+func newReporter(cfg config) (statusReporter, error) {
+	if cfg.Controller == ControllerSveltos {
+		return newSveltosReporter(cfg)
+	}
+	return newArgoReporter(cfg)
+}
+
+// liveStatusWriter writes a Release's LiveStatus to ConfigHub under the worker
+// identity. Both reporters embed it.
+type liveStatusWriter struct {
+	frontdoor *lib.WorkerFrontdoorClient
+}
+
+// newLiveStatusWriter authenticates once to fail fast on bad credentials. The
+// client itself is deliberately not cached — see liveStatusWriter.client.
+func newLiveStatusWriter(cfg config) (liveStatusWriter, error) {
+	fc := lib.NewWorkerFrontdoorClient(cfg.ConfigHubURL, "", cfg.WorkerID, cfg.WorkerSecret)
+	if fc.GetClient() == nil {
+		_ = fc.Close()
+		return liveStatusWriter{}, fmt.Errorf("worker frontdoor authentication failed")
+	}
+	return liveStatusWriter{frontdoor: fc}, nil
+}
+
+// newArgoReporter builds the Argo CD live-status reporter: a dynamic Kubernetes
+// client (in-cluster or kubeconfig), a ConfigHub API client under the worker
+// identity, and an unfiltered informer over Argo Applications in the configured
+// namespace.
+func newArgoReporter(cfg config) (*reporter, error) {
 	dyn, err := kube.NewDynamicClient()
 	if err != nil {
 		return nil, err
 	}
 
-	// Authenticate once here to fail fast on bad credentials. The client itself is
-	// deliberately not cached — see reporter.client.
-	fc := lib.NewWorkerFrontdoorClient(cfg.ConfigHubURL, "", cfg.WorkerID, cfg.WorkerSecret)
-	if fc.GetClient() == nil {
-		_ = fc.Close()
-		return nil, fmt.Errorf("worker frontdoor authentication failed")
+	writer, err := newLiveStatusWriter(cfg)
+	if err != nil {
+		return nil, err
 	}
+	fc := writer.frontdoor
 
 	// No label selector: what an Application deploys is not watch-filterable, so
 	// the reporter watches all Applications and filters in-process.
@@ -100,13 +130,13 @@ func newReporter(cfg config) (*reporter, error) {
 	informer := factory.ForResource(kube.ApplicationsGVR).Informer()
 
 	r := &reporter{
-		frontdoor:  fc,
-		namespace:  cfg.ArgoNamespace,
-		informer:   informer,
-		queue:      workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
-		lastSig:    make(map[string]string),
-		spaceIDs:   make(map[string]uuid.UUID),
-		releaseIDs: make(map[string]uuid.UUID),
+		liveStatusWriter: writer,
+		namespace:        cfg.ArgoNamespace,
+		informer:         informer,
+		queue:            workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
+		lastSig:          make(map[string]string),
+		spaceIDs:         make(map[string]uuid.UUID),
+		releaseIDs:       make(map[string]uuid.UUID),
 	}
 
 	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -248,7 +278,7 @@ func (r *reporter) report(ctx context.Context, key string) error {
 // created with, and starts failing with 401 "token is expired" for the process's
 // remaining lifetime once that token's 24h TTL runs out. This is a cheap
 // RLock-guarded read of an existing client — it triggers no authentication.
-func (r *reporter) client() (*goclientnew.ClientWithResponses, error) {
+func (r *liveStatusWriter) client() (*goclientnew.ClientWithResponses, error) {
 	c := r.frontdoor.GetClient()
 	if c == nil {
 		return nil, fmt.Errorf("no authenticated ConfigHub client")
@@ -335,7 +365,7 @@ func (r *reporter) getReleaseID(ctx context.Context, spaceID uuid.UUID, manifest
 
 // patchRelease writes status as the Release's LiveStatus. The worker is
 // authorized by EditChildren on the Release's Target.
-func (r *reporter) patchRelease(ctx context.Context, spaceID, releaseID uuid.UUID, status goclientnew.ReleaseLiveStatus) error {
+func (r *liveStatusWriter) patchRelease(ctx context.Context, spaceID, releaseID uuid.UUID, status goclientnew.ReleaseLiveStatus) error {
 	liveStatus, err := mergePatchObject(status)
 	if err != nil {
 		return fmt.Errorf("encode the live status of release %s: %w", releaseID, err)
@@ -399,14 +429,18 @@ func deploymentSpaceSlug(u *unstructured.Unstructured) string {
 }
 
 // spaceSlugFromRepoURL extracts <slug> from an OCI repoURL of the form
-// .../space/<slug>. It returns "" when the URL has no such segment or the slug
-// is empty or itself contains a path separator.
+// .../space/<slug>. A trailing :<tag> or @<digest> is dropped: Argo CD keeps the
+// tag in targetRevision, but Sveltos puts it in the URL (.../space/<slug>:latest).
+// It returns "" when the URL has no such segment or the slug is empty or itself
+// contains a path separator.
 func spaceSlugFromRepoURL(repoURL string) string {
 	i := strings.LastIndex(repoURL, ociSpacePathSep)
 	if i < 0 {
 		return ""
 	}
-	slug := strings.Trim(repoURL[i+len(ociSpacePathSep):], "/")
+	slug, _, _ := strings.Cut(repoURL[i+len(ociSpacePathSep):], "@")
+	slug, _, _ = strings.Cut(slug, ":")
+	slug = strings.Trim(slug, "/")
 	if slug == "" || strings.Contains(slug, "/") {
 		return ""
 	}

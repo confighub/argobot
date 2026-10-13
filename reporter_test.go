@@ -144,6 +144,10 @@ func TestSpaceSlugFromRepoURL(t *testing.T) {
 		{"", ""},
 		// A trailing extra path segment is not a bare slug.
 		{"https://oci.example.com/space/orders/prod", ""},
+		// Sveltos keeps the tag or digest in the URL.
+		{"oci://172.18.0.1:9092/space/sveltos-release-2453:latest", "sveltos-release-2453"},
+		{"oci://gw/space/orders-prod@sha256:0123abcd", "orders-prod"},
+		{"oci://gw/space/:latest", ""},
 	}
 	for _, c := range cases {
 		if got := spaceSlugFromRepoURL(c.in); got != c.want {

@@ -1,0 +1,282 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Complete, self-documenting Kubernetes deployment for argobot driving Sveltos,
+# the Sveltos variant of ../argobot.yaml. Install it on the Sveltos management
+# cluster: that is where ClusterProfiles, ClusterSummaries and HealthCheckReports
+# live.
+#
+# Every environment variable argobot reads under Sveltos appears in the
+# Deployment's env list below. The ARGO_*/ARGOCD_* variables are Argo CD only and
+# are ignored here.
+#
+# The Deployment reads its credentials from a Secret named argobot-secrets via
+# secretKeyRef. That Secret is deliberately NOT defined here: supply it out of
+# band (your secret store / External Secrets, or `kubectl create secret generic
+# argobot-secrets --from-literal=...`). Expected keys: CONFIGHUB_WORKER_ID and
+# CONFIGHUB_WORKER_SECRET.
+#
+# The release workflow publishes only manifests/*.yaml as the config bundle, so
+# this variant is not part of ghcr.io/confighub/configs/argobot.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argobot
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argobot
+  namespace: argobot
+---
+# Forcing a redeploy: argobot patches the profile.projectsveltos.io/redeploy
+# annotation on the ClusterProfile (cluster-scoped) or Profile (namespaced) that
+# deploys a Space. Sveltos's profiles aren't confined to one namespace, so this is
+# a ClusterRole; it grants nothing beyond reading and patching profiles.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argobot-sveltos
+rules:
+  - apiGroups: ["config.projectsveltos.io"]
+    resources: ["clusterprofiles", "profiles"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argobot-sveltos
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argobot-sveltos
+subjects:
+  - kind: ServiceAccount
+    name: argobot
+    namespace: argobot
+---
+# Cluster-wide read-only access for live-status reporting: argobot watches
+# Sveltos HealthCheckReports and ClusterSummaries in every namespace (a remote
+# cluster's reports are collected into the management cluster). get/list/watch
+# only.
+#
+# Secrets are deliberately excluded: RBAC has no "all except X", and Secrets live
+# in the core ("") API group, so the core group is enumerated WITHOUT secrets,
+# while every other group is wildcarded (no Secrets exist outside core). To cover
+# a new CRD's API group, add it to the second rule's apiGroups list.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argobot-read
+rules:
+  # Core API group, minus Secrets.
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - configmaps
+      - events
+      - namespaces
+      - nodes
+      - persistentvolumeclaims
+      - persistentvolumes
+      - replicationcontrollers
+      - resourcequotas
+      - limitranges
+      - serviceaccounts
+    verbs: ["get", "list", "watch"]
+  # All other API groups: read everything (Secrets exist only in core, above).
+  - apiGroups:
+      - apps
+      - batch
+      - autoscaling
+      - networking.k8s.io
+      - policy
+      - storage.k8s.io
+      - discovery.k8s.io
+      - apiextensions.k8s.io
+      - config.projectsveltos.io
+      - lib.projectsveltos.io
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argobot-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argobot-read
+subjects:
+  - kind: ServiceAccount
+    name: argobot
+    namespace: argobot
+---
+# Live status: Sveltos records no digest of what it fetched, so argobot reads the
+# deployed objects themselves. This HealthCheck collects every object carrying
+# confighub.com/origin (which names its Space, Unit and Revision) and judges its
+# health; Sveltos writes the result as a HealthCheckReport per cluster.
+#
+# Coverage: it must select at least one object of every Unit, or argobot can't
+# tell which revision of an unselected Unit is running and reports nothing for
+# that Space. Add any other kind your Releases contain to resourceSelectors.
+# Secrets are left out so their contents are never copied into reports.
+#
+# Size: collected objects are stored in full, and a Kubernetes object is capped
+# at about 1.5 MiB; 100 ConfigMaps of about 4 KB each made a 693 KB report. For
+# big Releases, select one small object per Unit rather than everything, or split
+# the check.
+#
+# The Lua must return `status` for each resource, not `healthStatus` as the
+# HealthCheckSpec API comment says; with healthStatus every report fails
+# validation.
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: HealthCheck
+metadata:
+  name: argobot-live-status
+spec:
+  collectResources: true
+  resourceSelectors:
+    - {group: "", version: v1, kind: Namespace}
+    - {group: "", version: v1, kind: ConfigMap}
+    - {group: "", version: v1, kind: Service}
+    - {group: "", version: v1, kind: ServiceAccount}
+    - {group: "", version: v1, kind: PersistentVolumeClaim}
+    - {group: apps, version: v1, kind: Deployment}
+    - {group: apps, version: v1, kind: StatefulSet}
+    - {group: apps, version: v1, kind: DaemonSet}
+    - {group: batch, version: v1, kind: Job}
+    - {group: batch, version: v1, kind: CronJob}
+    - {group: networking.k8s.io, version: v1, kind: Ingress}
+    - {group: rbac.authorization.k8s.io, version: v1, kind: Role}
+    - {group: rbac.authorization.k8s.io, version: v1, kind: RoleBinding}
+    - {group: rbac.authorization.k8s.io, version: v1, kind: ClusterRole}
+    - {group: rbac.authorization.k8s.io, version: v1, kind: ClusterRoleBinding}
+    - {group: apiextensions.k8s.io, version: v1, kind: CustomResourceDefinition}
+  evaluateHealth: |
+    function evaluate()
+      local hs = {}
+      hs.resources = {}
+      for _, r in ipairs(resources) do
+        local ann = r.metadata.annotations
+        if ann ~= nil and ann["confighub.com/origin"] ~= nil then
+          local status = "Healthy"
+          local msg = ""
+          if r.kind == "Deployment" or r.kind == "StatefulSet" then
+            local want = r.spec.replicas or 1
+            local ready = (r.status and r.status.readyReplicas) or 0
+            if ready < want then
+              status = "Progressing"
+              msg = "ready " .. ready .. "/" .. want
+            end
+          elseif r.kind == "DaemonSet" then
+            local want = (r.status and r.status.desiredNumberScheduled) or 0
+            local ready = (r.status and r.status.numberReady) or 0
+            if ready < want then
+              status = "Progressing"
+              msg = "ready " .. ready .. "/" .. want
+            end
+          end
+          table.insert(hs.resources, {resource = r, status = status, message = msg})
+        end
+      end
+      return hs
+    end
+---
+# Runs the HealthCheck on every cluster with a Sveltos agent. Sveltos requires a
+# notification; a KubernetesEvent is the least intrusive.
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: ClusterHealthCheck
+metadata:
+  name: argobot-live-status
+spec:
+  clusterSelector:
+    matchLabels:
+      sveltos-agent: present
+  livenessChecks:
+    - name: argobot-live-status
+      type: HealthCheck
+      livenessSourceRef:
+        kind: HealthCheck
+        apiVersion: lib.projectsveltos.io/v1beta1
+        name: argobot-live-status
+  notifications:
+    - name: event
+      type: KubernetesEvent
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argobot
+  namespace: argobot
+  labels:
+    app: argobot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: argobot
+  template:
+    metadata:
+      labels:
+        app: argobot
+    spec:
+      serviceAccountName: argobot
+      containers:
+        - name: argobot
+          image: ghcr.io/confighub/argobot:latest
+          env:
+            # ── ConfigHub connection (required) ──────────────────────────────
+            - name: CONFIGHUB_URL
+              value: "https://hub.confighub.com"
+            - name: CONFIGHUB_WORKER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: argobot-secrets
+                  key: CONFIGHUB_WORKER_ID
+            - name: CONFIGHUB_WORKER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: argobot-secrets
+                  key: CONFIGHUB_WORKER_SECRET
+
+            # ── Controller ───────────────────────────────────────────────────
+            # "sveltos" forces a redeploy by patching the profile's
+            # profile.projectsveltos.io/redeploy annotation, and reports live
+            # status from HealthCheckReports.
+            - name: GITOPS_CONTROLLER
+              value: "sveltos"
+
+            # ── Event subscription ───────────────────────────────────────────
+            # Keys the server-held delivery cursor; keep it stable across restarts.
+            - name: CONFIGHUB_SUBSCRIPTION_NAME
+              value: "argobot"
+            # By default argobot scopes to the Targets its worker is the bridge
+            # for (discovered at startup). CONFIGHUB_EVENT_TARGET_ID overrides
+            # that with one Target; CONFIGHUB_EVENT_SPACE_ID narrows to one Space.
+            # - name: CONFIGHUB_EVENT_SPACE_ID
+            #   value: ""
+            # - name: CONFIGHUB_EVENT_TARGET_ID
+            #   value: ""
+
+            # ── Live-status reporting ────────────────────────────────────────
+            # argobot watches the HealthCheckReports the HealthCheck above
+            # produces and writes each Release's sync/health back to ConfigHub as
+            # its LiveStatus. On by default; set to "false" to disable.
+            # - name: CONFIGHUB_REPORT_LIVE_STATUS
+            #   value: "false"
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]

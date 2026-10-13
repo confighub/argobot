@@ -9,6 +9,18 @@ import (
 
 	"github.com/confighub/argobot/argo"
 	"github.com/confighub/argobot/kube"
+	"github.com/confighub/argobot/sveltos"
+)
+
+// Controllers selectable via GITOPS_CONTROLLER.
+const (
+	// ControllerArgoCD drives Argo CD Applications, by ARGO_SYNC_MODE. This is
+	// the default.
+	ControllerArgoCD = "argocd"
+	// ControllerSveltos drives Sveltos ClusterProfiles and Profiles: it forces a
+	// redeploy by patching their profile.projectsveltos.io/redeploy annotation,
+	// and reports live status from Sveltos HealthCheckReports.
+	ControllerSveltos = "sveltos"
 )
 
 // Sync modes selectable via ARGO_SYNC_MODE.
@@ -22,10 +34,11 @@ const (
 	SyncModeArgoCD = "argocd"
 )
 
-// Syncer triggers a sync of a single Argo CD Application. Both the Kubernetes
-// and the Argo CD REST backends implement it; the event handler is agnostic to
-// which is in use. Per-backend tunables are bound at construction, so only the
-// Application name varies per event.
+// Syncer triggers a sync of a single Argo CD Application or Sveltos profile. The
+// Kubernetes and Argo CD REST backends implement it for Argo CD, and the sveltos
+// backend for Sveltos; the event handler is agnostic to which is in use.
+// Per-backend tunables are bound at construction, so only the Application (or
+// profile) name varies per event.
 type Syncer interface {
 	Sync(ctx context.Context, appName string) error
 	// RepoURLs lists the Applications the backend can see, mapping each name to
@@ -34,8 +47,11 @@ type Syncer interface {
 	RepoURLs(ctx context.Context) (map[string][]string, error)
 }
 
-// newSyncer builds the Syncer for the configured mode.
+// newSyncer builds the Syncer for the configured controller and mode.
 func newSyncer(cfg config) (Syncer, error) {
+	if cfg.Controller == ControllerSveltos {
+		return sveltos.NewSyncer()
+	}
 	switch cfg.ArgoSyncMode {
 	case SyncModeArgoCD:
 		return argo.NewClient(argo.ClientConfig{

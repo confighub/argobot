@@ -1,8 +1,8 @@
 # argobot
 
-A ConfigHub bot that syncs Argo CD applications.
+A ConfigHub bot that syncs Argo CD applications, or Sveltos profiles.
 
-argobot connects to ConfigHub over the HTTP long-poll protocol and subscribes to ConfigHub's event log. When ConfigHub records that a deploy happened — a Unit apply completed, or a Release was published — argobot triggers a sync of the corresponding Argo CD Application, so the change takes effect immediately instead of waiting for Argo's next reconciliation.
+argobot connects to ConfigHub over the HTTP long-poll protocol and subscribes to ConfigHub's event log. When ConfigHub records that a deploy happened — a Unit apply completed, or a Release was published — argobot triggers a sync of the corresponding Argo CD Application (or, with `GITOPS_CONTROLLER=sveltos`, a redeploy of the Sveltos profile; see [Sveltos](#sveltos)), so the change takes effect immediately instead of waiting for the controller's next reconciliation.
 
 This is the first "bot" implementation that takes a different approach than the original Bridge design. We expect to replace all bridge functionality with this kind of bot mechanism.
 
@@ -35,6 +35,19 @@ The worker's access comes from grants on the Target its deployment Spaces releas
 
 Writes are coalesced per Application (a sync's burst of updates becomes one write) and deduplicated against the last projection (an idle Application produces no write). Reporting is on by default and needs Kubernetes access; set `CONFIGHUB_REPORT_LIVE_STATUS=false` to disable it, and if the Kubernetes client cannot be built the reporter is skipped with a warning rather than failing the bot.
 
+### Sveltos
+
+`GITOPS_CONTROLLER=sveltos` makes argobot drive [Sveltos](https://projectsveltos.github.io/sveltos/) instead of Argo CD. Event handling, Target discovery and the ConfigHub calls are the same; the two Argo-facing parts change. The `ARGO_*`/`ARGOCD_*` variables are Argo CD only and are ignored.
+
+**Forcing a sync.** argobot writes a new value (the current time) to the `profile.projectsveltos.io/redeploy` annotation of each profile that deploys the event's Space. Any change of value redeploys every ClusterSummary the profile manages, which fetches its `remoteURL` again, so a new Release reaches the cluster within seconds instead of at the profile's next poll; a redeploy with no new Release writes no objects. Unlike Argo's refresh annotation, Sveltos leaves the annotation in place, which is why each sync writes a new value. Sveltos ignores it for profiles with `syncMode: OneTime`. The profiles are the ClusterProfiles (cluster-scoped, named by their name) and Profiles (named `<namespace>/<name>`) whose `spec.policyRefs[].remoteURL.url` or `spec.kustomizationRefs[].remoteURL.url` names the Space — Sveltos keeps the tag in the URL (`.../space/<slug>:latest`), and a trailing `:<tag>` or `@<digest>` is ignored — plus the ClusterProfile named `<slug>`. On a ClusterProfile the annotation redeploys every cluster the profile selects. Under `cub cluster up` the child ClusterProfiles are applied by a root profile; Sveltos keeps argobot's annotation when the root reapplies a child.
+
+**Live status.** Sveltos records no digest of what it fetched, so argobot reads the deployed objects instead. Every object in a Release carries a `confighub.com/origin` annotation naming its Space, Unit and Revision. A `HealthCheck` with `collectResources: true`, run by a `ClusterHealthCheck`, makes Sveltos write a `HealthCheckReport` per cluster holding each collected object and its health. argobot watches HealthCheckReports in every namespace, reads the origin of each collected object, and finds the Release each Space is running: publishing tags every bundled Revision with the Release's Tag, so it is the newest published Release of the Space whose Tag is on every observed Unit revision (withdrawn Releases are skipped; several Releases can match when Units didn't change, and those bundle the same content). Health is the worst of the objects' `healthStatus`; sync and operation come from the cluster's ClusterSummary for the profile that deploys the Space (`Provisioned` is synced, `Provisioning` a running operation, `Failed`/`FailedNonRetriable` a failed one).
+
+- **Coverage.** The HealthCheck must select at least one object of every Unit, or argobot can't tell which revision of an unselected Unit is running and reports nothing for that Space. Reports also have a size limit (a Kubernetes object is capped at about 1.5 MiB): for big Releases, select one small object per Unit rather than everything, or split the check.
+- **One report per cluster, one `LiveStatus` per Release.** With one profile per variant per cluster, as `cub cluster up` sets up, these coincide. A Release that several clusters run is written by each cluster's report in turn.
+
+`manifests/sveltos/argobot.yaml` is the Sveltos deployment, for the Sveltos management cluster: a `ClusterRole` to `patch` ClusterProfiles and Profiles, the read-only `ClusterRole` extended to the `config.projectsveltos.io` and `lib.projectsveltos.io` API groups, a `HealthCheck` and `ClusterHealthCheck` that collect every object carrying `confighub.com/origin` across common kinds (extend `resourceSelectors` to cover the kinds your Releases contain), and the Deployment with `GITOPS_CONTROLLER=sveltos`. It is not part of the published config bundle.
+
 ## Configuration
 
 All configuration is via environment variables:
@@ -44,6 +57,7 @@ All configuration is via environment variables:
 | `CONFIGHUB_URL` | yes | ConfigHub base URL, e.g. `https://hub.confighub.com` |
 | `CONFIGHUB_WORKER_ID` | yes | Worker (bot) ID from ConfigHub |
 | `CONFIGHUB_WORKER_SECRET` | yes | Worker secret from ConfigHub |
+| `GITOPS_CONTROLLER` | no | `argocd` (default) or `sveltos`. See [Sveltos](#sveltos). Every `ARGO_*`/`ARGOCD_*` variable below applies to `argocd` only. |
 | `ARGO_SYNC_MODE` | no | `kubernetes` (default) or `argocd`. See [Sync modes](#sync-modes). |
 | `ARGO_NAMESPACE` | no | _kubernetes mode._ Namespace holding the Argo CD Application resources. Defaults to `argocd`. |
 | `ARGO_REFRESH_TYPE` | no | _kubernetes mode._ `hard` (default) or `normal`. |
@@ -59,7 +73,7 @@ All configuration is via environment variables:
 | `ARGO_FORCE` | no | _argocd mode._ `true` to use Argo's force strategy on sync. |
 | `CONFIGHUB_REPORT_LIVE_STATUS` | no | `false` to disable live-status reporting. On by default; see [Live-status reporting](#live-status-reporting). Needs Kubernetes access. |
 
-When `ARGO_SYNC_MODE` is unset, argobot runs in `kubernetes` mode and needs no Argo CD credentials; it uses the in-cluster ServiceAccount (or a local kubeconfig when run out of cluster). Set `ARGO_SYNC_MODE=argocd` to use the REST API instead, which then requires `ARGOCD_SERVER` and `ARGOCD_AUTH_TOKEN`.
+When `GITOPS_CONTROLLER` is unset, argobot drives Argo CD. When `ARGO_SYNC_MODE` is unset, argobot runs in `kubernetes` mode and needs no Argo CD credentials; it uses the in-cluster ServiceAccount (or a local kubeconfig when run out of cluster). Set `ARGO_SYNC_MODE=argocd` to use the REST API instead, which then requires `ARGOCD_SERVER` and `ARGOCD_AUTH_TOKEN`.
 
 ## Setup
 
@@ -103,6 +117,8 @@ A `cub unit apply` or a `cub release` for the scoped (Space, Target) now emits a
 argobot runs in the cluster alongside Argo CD. `manifests/argobot.yaml` is a complete, self-documenting deployment: a Namespace, a ServiceAccount, its RBAC (see below), and a Deployment whose `env` list carries **every** supported variable — defaults filled in, and the ones that must be absent by default commented out. The Deployment reads its credentials from a Secret named `argobot-secrets` via `secretKeyRef`; that Secret is intentionally **not** part of the manifest — supply it out of band (secret store / External Secrets, or `kubectl create secret generic argobot-secrets --from-literal=...`) so the bundle never ships or overwrites credential material. Expected keys: `CONFIGHUB_WORKER_ID`, `CONFIGHUB_WORKER_SECRET`, and (argocd mode only) `ARGOCD_AUTH_TOKEN`.
 
 RBAC comes in two parts. A **`Role`/`RoleBinding` in the Argo CD namespace** (`argocd` by default) grants read+write there — argobot patches an Application's refresh annotation to force a sync, and may manage other Argo CD resources; being namespaced, it grants nothing outside `argocd`. A **`ClusterRole`/`ClusterRoleBinding`** grants cluster-wide **read-only** (`get`/`list`/`watch`) for health/status reporting across all namespaces — deliberately **excluding Secrets** (the core API group is enumerated without `secrets`; other groups are wildcarded, and Secrets exist only in core). Add a CRD's API group to that second rule to extend coverage. The Namespace, ServiceAccount, and Deployment are argobot's own — adjust the namespaces to match your cluster.
+
+For Sveltos, deploy `manifests/sveltos/argobot.yaml` instead; see [Sveltos](#sveltos).
 
 ### Config bundle
 

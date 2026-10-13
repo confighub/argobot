@@ -13,8 +13,8 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("CONFIGHUB_WORKER_ID", "worker")
 	t.Setenv("CONFIGHUB_WORKER_SECRET", "secret")
 	for _, k := range []string{
-		"ARGO_SYNC_MODE", "ARGOCD_SERVER", "ARGOCD_AUTH_TOKEN",
-		"ARGO_NAMESPACE", "ARGO_REFRESH_TYPE",
+		"GITOPS_CONTROLLER", "ARGO_SYNC_MODE", "ARGOCD_SERVER", "ARGOCD_AUTH_TOKEN",
+		"ARGO_NAMESPACE", "ARGO_REFRESH_TYPE", "ARGO_APP",
 	} {
 		t.Setenv(k, "")
 	}
@@ -26,6 +26,9 @@ func TestLoadConfigModes(t *testing.T) {
 		cfg, err := loadConfig()
 		if err != nil {
 			t.Fatalf("loadConfig() error = %v", err)
+		}
+		if cfg.Controller != ControllerArgoCD {
+			t.Errorf("Controller = %q, want %q", cfg.Controller, ControllerArgoCD)
 		}
 		if cfg.ArgoSyncMode != SyncModeKubernetes {
 			t.Errorf("ArgoSyncMode = %q, want %q", cfg.ArgoSyncMode, SyncModeKubernetes)
@@ -65,6 +68,32 @@ func TestLoadConfigModes(t *testing.T) {
 		t.Setenv("ARGO_SYNC_MODE", "bogus")
 		if _, err := loadConfig(); err == nil {
 			t.Fatal("loadConfig() error = nil, want invalid mode error")
+		}
+	})
+
+	t.Run("sveltos needs no Argo settings and ignores them", func(t *testing.T) {
+		setBaseEnv(t)
+		t.Setenv("GITOPS_CONTROLLER", "sveltos")
+		// An invalid Argo mode and a pinned Argo app must not affect Sveltos.
+		t.Setenv("ARGO_SYNC_MODE", "bogus")
+		t.Setenv("ARGO_APP", "pinned-app")
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("loadConfig() error = %v", err)
+		}
+		if cfg.Controller != ControllerSveltos {
+			t.Errorf("Controller = %q, want %q", cfg.Controller, ControllerSveltos)
+		}
+		if cfg.ArgoApp != "" || cfg.ArgoSyncMode != "" || cfg.ArgoNamespace != "" {
+			t.Errorf("Argo settings kept under Sveltos: %+v", cfg)
+		}
+	})
+
+	t.Run("unknown controller is rejected", func(t *testing.T) {
+		setBaseEnv(t)
+		t.Setenv("GITOPS_CONTROLLER", "flux")
+		if _, err := loadConfig(); err == nil {
+			t.Fatal("loadConfig() error = nil, want invalid controller error")
 		}
 	})
 }
