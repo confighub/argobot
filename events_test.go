@@ -124,6 +124,15 @@ func TestAppNamesForSpace(t *testing.T) {
 		"d": {"oci://gw/space/app-dev/extra"},
 		// Sveltos profiles keep the tag in the URL.
 		"team-a/e": {"oci://gw/space/app-dev-2:latest"},
+		// A namespaced key named after its Space matches by its name part, as a
+		// Flux OCIRepository with no usable URL does.
+		"flux-system/orders": nil,
+	}
+	if got, want := appNamesForSpace(apps, "orders"), []string{"flux-system/orders"}; !slices.Equal(got, want) {
+		t.Errorf("appNamesForSpace(orders) = %v, want %v", got, want)
+	}
+	if got := appNamesForSpace(apps, "flux-system"); len(got) != 0 {
+		t.Errorf("appNamesForSpace(flux-system) = %v: a namespace must not match", got)
 	}
 	if got, want := appNamesForSpace(apps, "app-dev"), []string{"a"}; !slices.Equal(got, want) {
 		t.Errorf("appNamesForSpace(app-dev) = %v, want %v", got, want)

@@ -59,7 +59,7 @@ const (
 // Application produces no churn, and coalesced per Application so a sync's
 // burst of updates is one write.
 type reporter struct {
-	liveStatusWriter
+	releaseLookup
 	namespace string
 	informer  cache.SharedIndexInformer
 	queue     workqueue.TypedRateLimitingInterface[string]
@@ -67,6 +67,39 @@ type reporter struct {
 	// lastSig deduplicates writes: appKey -> signature of the last projection
 	// written (the Release and the encoded status with ObservedAt omitted).
 	lastSig map[string]string
+}
+
+// statusReporter is a running live-status reporter: the Argo CD reporter
+// below, the Sveltos one (reporter_sveltos.go) or the Flux one
+// (reporter_flux.go).
+type statusReporter interface {
+	Run(ctx context.Context) error
+}
+
+// newReporter builds the live-status reporter for the configured controller,
+// writing through hub, the ConfigHub client argobot shares with its channel
+// listener.
+func newReporter(cfg config, hub *cubapi.Client) (statusReporter, error) {
+	switch cfg.Controller {
+	case ControllerSveltos:
+		return newSveltosReporter(cfg, hub)
+	case ControllerFlux:
+		return newFluxReporter(cfg, hub)
+	}
+	return newArgoReporter(cfg, hub)
+}
+
+// liveStatusWriter writes a Release's LiveStatus to ConfigHub as argobot's
+// identity, through the client its listener uses. Every reporter embeds it.
+type liveStatusWriter struct {
+	api *goclientnew.ClientWithResponses
+}
+
+// releaseLookup finds the Release a controller is running from the deployment
+// Space's slug and the manifest digest the controller reports, as Argo CD and
+// Flux both do. It embeds the liveStatusWriter that writes to that Release.
+type releaseLookup struct {
+	liveStatusWriter
 
 	// spaceIDs caches resolved deployment-Space slug -> id lookups, and
 	// releaseIDs resolved Space and manifest digest -> Release id lookups, which a
@@ -76,26 +109,12 @@ type reporter struct {
 	releaseIDs map[string]uuid.UUID
 }
 
-// statusReporter is a running live-status reporter: the Argo CD reporter
-// below, or the Sveltos one (reporter_sveltos.go).
-type statusReporter interface {
-	Run(ctx context.Context) error
-}
-
-// newReporter builds the live-status reporter for the configured controller,
-// writing through hub, the ConfigHub client argobot shares with its channel
-// listener.
-func newReporter(cfg config, hub *cubapi.Client) (statusReporter, error) {
-	if cfg.Controller == ControllerSveltos {
-		return newSveltosReporter(cfg, hub)
+func newReleaseLookup(writer liveStatusWriter) releaseLookup {
+	return releaseLookup{
+		liveStatusWriter: writer,
+		spaceIDs:         make(map[string]uuid.UUID),
+		releaseIDs:       make(map[string]uuid.UUID),
 	}
-	return newArgoReporter(cfg, hub)
-}
-
-// liveStatusWriter writes a Release's LiveStatus to ConfigHub as argobot's
-// identity, through the client its listener uses. Both reporters embed it.
-type liveStatusWriter struct {
-	api *goclientnew.ClientWithResponses
 }
 
 // newArgoReporter builds the Argo CD live-status reporter: a dynamic Kubernetes
@@ -114,13 +133,11 @@ func newArgoReporter(cfg config, hub *cubapi.Client) (*reporter, error) {
 	informer := factory.ForResource(kube.ApplicationsGVR).Informer()
 
 	r := &reporter{
-		liveStatusWriter: liveStatusWriter{api: hub.API},
-		namespace:        cfg.ArgoNamespace,
-		informer:         informer,
-		queue:            workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
-		lastSig:          make(map[string]string),
-		spaceIDs:         make(map[string]uuid.UUID),
-		releaseIDs:       make(map[string]uuid.UUID),
+		releaseLookup: newReleaseLookup(liveStatusWriter{api: hub.API}),
+		namespace:     cfg.ArgoNamespace,
+		informer:      informer,
+		queue:         workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
+		lastSig:       make(map[string]string),
 	}
 
 	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -257,7 +274,7 @@ func (r *reporter) report(ctx context.Context, key string) error {
 // deployment Spaces it reports on, so a slug that resolves is one it is
 // responsible for. A slug that does not resolve (not found, or a Space it cannot
 // see) is treated as not-ours and skipped.
-func (r *reporter) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool) {
+func (r *releaseLookup) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool) {
 	if slug == "" {
 		return uuid.Nil, false
 	}
@@ -290,7 +307,7 @@ func (r *reporter) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool
 // revision Argo synced: the newest, should a republish of the same content have
 // made more than one. Hits are cached; a miss is not, since the Release may not
 // be listed yet.
-func (r *reporter) getReleaseID(ctx context.Context, spaceID uuid.UUID, manifestDigest string) (uuid.UUID, bool, error) {
+func (r *releaseLookup) getReleaseID(ctx context.Context, spaceID uuid.UUID, manifestDigest string) (uuid.UUID, bool, error) {
 	cacheKey := spaceID.String() + "/" + manifestDigest
 	if id, ok := r.releaseIDs[cacheKey]; ok {
 		return id, true, nil

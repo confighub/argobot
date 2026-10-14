@@ -18,10 +18,11 @@ import (
 //
 // argobot reacts to the ConfigHub events its Channel subscribes to: release
 // facts, scoped on the Channel to whatever Spaces or Targets the
-// operator chose. It force-syncs the corresponding Argo CD Application or
-// Sveltos profile, which comes from ArgoApp when set (Argo CD only), otherwise
-// from the event itself (its Space slug names every Application or profile
-// whose OCI source is that Space, and the one named after it).
+// operator chose. It force-syncs the corresponding Argo CD Application, Sveltos
+// profile or Flux OCIRepository, which comes from ArgoApp when set (Argo CD
+// only), otherwise from the event itself (its Space slug names every
+// Application, profile or repository whose OCI source is that Space, and the
+// one named after it).
 type config struct {
 	ConfigHubURL string
 
@@ -38,8 +39,13 @@ type config struct {
 	Channel string
 
 	// Controller selects the GitOps controller argobot drives: "argocd"
-	// (default) or "sveltos". The Argo* settings below apply to Argo CD only.
+	// (default), "sveltos" or "flux". The Argo* settings below apply to Argo CD
+	// only.
 	Controller string
+
+	// FluxNamespace is where an OCIRepository named without a namespace is looked
+	// up (defaults to "flux-system"). Flux only.
+	FluxNamespace string
 
 	// ArgoSyncMode selects how argobot triggers a sync: "kubernetes" (default)
 	// patches the Application's refresh annotation via the Kubernetes API;
@@ -89,6 +95,7 @@ func loadConfig() (config, error) {
 		AssertionAudience: os.Getenv("CONFIGHUB_ASSERTION_AUDIENCE"),
 		Channel:           os.Getenv("CONFIGHUB_CHANNEL"),
 		Controller:        os.Getenv("GITOPS_CONTROLLER"),
+		FluxNamespace:     os.Getenv("FLUX_NAMESPACE"),
 		ArgoSyncMode:      os.Getenv("ARGO_SYNC_MODE"),
 		ArgoServer:        strings.TrimRight(os.Getenv("ARGOCD_SERVER"), "/"),
 		ArgoToken:         os.Getenv("ARGOCD_AUTH_TOKEN"),
@@ -132,16 +139,24 @@ func loadConfig() (config, error) {
 			return config{}, fmt.Errorf("invalid ARGO_SYNC_MODE %q: must be %q or %q",
 				cfg.ArgoSyncMode, SyncModeKubernetes, SyncModeArgoCD)
 		}
-	case ControllerSveltos:
+	case ControllerSveltos, ControllerFlux:
 		// No extra required vars: in-cluster credentials come from the
 		// ServiceAccount. The ARGO_*/ARGOCD_* settings are Argo-only; clear them so
-		// none of them, ARGO_APP above all, changes what a Sveltos deployment syncs.
+		// none of them, ARGO_APP above all, changes what a Sveltos or Flux
+		// deployment syncs.
 		cfg.ArgoSyncMode, cfg.ArgoApp, cfg.ArgoAppNamespace = "", "", ""
 		cfg.ArgoServer, cfg.ArgoToken, cfg.ArgoNamespace, cfg.ArgoRefreshType = "", "", "", ""
 		cfg.ArgoInsecure, cfg.ArgoPrune, cfg.ArgoForce = false, false, false
 	default:
-		return config{}, fmt.Errorf("invalid GITOPS_CONTROLLER %q: must be %q or %q",
-			cfg.Controller, ControllerArgoCD, ControllerSveltos)
+		return config{}, fmt.Errorf("invalid GITOPS_CONTROLLER %q: must be %q, %q or %q",
+			cfg.Controller, ControllerArgoCD, ControllerSveltos, ControllerFlux)
+	}
+	if cfg.Controller == ControllerFlux {
+		if cfg.FluxNamespace == "" {
+			cfg.FluxNamespace = "flux-system"
+		}
+	} else {
+		cfg.FluxNamespace = ""
 	}
 
 	var missing []string

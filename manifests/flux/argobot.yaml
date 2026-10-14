@@ -1,0 +1,227 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Complete, self-documenting Kubernetes deployment for argobot driving Flux, the
+# Flux variant of ../argobot.yaml. Install it on the cluster Flux runs on: that
+# is where the OCIRepositories and Kustomizations live.
+#
+# Every environment variable argobot reads under Flux appears in the
+# Deployment's env list below. The ARGO_*/ARGOCD_* variables are Argo CD only and
+# are ignored here.
+#
+# The Deployment reads its credentials from a Secret named argobot-secrets via
+# secretKeyRef. That Secret is deliberately NOT defined here: supply it out of
+# band (your secret store / External Secrets, or `kubectl create secret generic
+# argobot-secrets --from-literal=...`). Expected key: CONFIGHUB_AUTH_PRIVATE_KEY
+# (the service account's private JWK).
+#
+# argobot needs Flux 2.6 or later, which serves OCIRepository as
+# source.toolkit.fluxcd.io/v1.
+#
+# The release workflow publishes only manifests/*.yaml as the config bundle, so
+# this variant is not part of ghcr.io/confighub/configs/argobot.
+#
+# A Space is deployed by an OCIRepository pulling it from the ConfigHub OCI
+# gateway, and a Kustomization applying it. For example:
+#
+#   apiVersion: source.toolkit.fluxcd.io/v1
+#   kind: OCIRepository
+#   metadata:
+#     name: orders-prod             # named after the Space, by convention
+#     namespace: flux-system
+#   spec:
+#     interval: 10m
+#     url: oci://<gateway>/space/orders-prod
+#     ref:
+#       tag: latest                 # the gateway serves only latest or a digest
+#     provider: generic
+#     secretRef:
+#       name: confighub-oci         # kubernetes.io/dockerconfigjson; username
+#                                   # "token" and password a ConfigHub token
+#                                   # (or a worker ID and its secret)
+#     # insecure: true              # only for a plain-HTTP gateway
+#   ---
+#   apiVersion: kustomize.toolkit.fluxcd.io/v1
+#   kind: Kustomization
+#   metadata:
+#     name: orders-prod
+#     namespace: flux-system
+#   spec:
+#     interval: 10m
+#     path: .
+#     prune: true
+#     wait: true                    # without it argobot reports health Unknown
+#     timeout: 2m
+#     sourceRef:
+#       kind: OCIRepository
+#       name: orders-prod
+#
+# No layerSelector is needed: a Release is a single tar+gzip layer, which Flux
+# extracts by default.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argobot
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argobot
+  namespace: argobot
+---
+# Forcing a sync: argobot patches the reconcile.fluxcd.io/requestedAt annotation
+# on the OCIRepository that pulls a Space. OCIRepositories aren't confined to one
+# namespace, so this is a ClusterRole; it grants nothing beyond reading and
+# patching them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argobot-flux
+rules:
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["ocirepositories"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argobot-flux
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argobot-flux
+subjects:
+  - kind: ServiceAccount
+    name: argobot
+    namespace: argobot
+---
+# Cluster-wide read-only access for live-status reporting: argobot watches Flux
+# OCIRepositories and Kustomizations in every namespace. get/list/watch only.
+#
+# Secrets are deliberately excluded: RBAC has no "all except X", and Secrets live
+# in the core ("") API group, so the core group is enumerated WITHOUT secrets,
+# while every other group is wildcarded (no Secrets exist outside core). To cover
+# a new CRD's API group, add it to the second rule's apiGroups list.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argobot-read
+rules:
+  # Core API group, minus Secrets.
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - configmaps
+      - events
+      - namespaces
+      - nodes
+      - persistentvolumeclaims
+      - persistentvolumes
+      - replicationcontrollers
+      - resourcequotas
+      - limitranges
+      - serviceaccounts
+    verbs: ["get", "list", "watch"]
+  # All other API groups: read everything (Secrets exist only in core, above).
+  - apiGroups:
+      - apps
+      - batch
+      - autoscaling
+      - networking.k8s.io
+      - policy
+      - storage.k8s.io
+      - discovery.k8s.io
+      - apiextensions.k8s.io
+      - source.toolkit.fluxcd.io
+      - kustomize.toolkit.fluxcd.io
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argobot-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argobot-read
+subjects:
+  - kind: ServiceAccount
+    name: argobot
+    namespace: argobot
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argobot
+  namespace: argobot
+  labels:
+    app: argobot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: argobot
+  template:
+    metadata:
+      labels:
+        app: argobot
+    spec:
+      serviceAccountName: argobot
+      containers:
+        - name: argobot
+          image: ghcr.io/confighub/argobot:latest
+          env:
+            # ── ConfigHub connection (required) ──────────────────────────────
+            - name: CONFIGHUB_URL
+              value: "https://hub.confighub.com"
+            # The service account key argobot authenticates with: a private
+            # JWK, as `cub serviceaccount key add --generate` writes it.
+            - name: CONFIGHUB_AUTH_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: argobot-secrets
+                  key: CONFIGHUB_AUTH_PRIVATE_KEY
+            # Only for a server whose CONFIGHUB_ASSERTION_AUDIENCE is not the default.
+            # - name: CONFIGHUB_ASSERTION_AUDIENCE
+            #   value: ""
+
+            # ── Controller ───────────────────────────────────────────────────
+            # "flux" forces a reconciliation by patching the OCIRepository's
+            # reconcile.fluxcd.io/requestedAt annotation, and reports live status
+            # from the Kustomizations that apply it.
+            - name: GITOPS_CONTROLLER
+              value: "flux"
+            # Where an OCIRepository is looked up when argobot falls back to the
+            # one named after the Space (if listing OCIRepositories fails).
+            # - name: FLUX_NAMESPACE
+            #   value: "flux-system"
+
+            # ── Channel ──────────────────────────────────────────────────────
+            # The ConfigHub Channel argobot claims and polls, as <space>/<slug>
+            # or a UUID. Which events it delivers (and for which Spaces and
+            # Targets) is the Channel's Subscriptions, set with cub, not here.
+            - name: CONFIGHUB_CHANNEL
+              value: "my-cluster/argobot"
+
+            # ── Live-status reporting ────────────────────────────────────────
+            # argobot watches Kustomizations and writes each Release's
+            # sync/health back to ConfigHub as its LiveStatus. On by default; set
+            # to "false" to disable.
+            # - name: CONFIGHUB_REPORT_LIVE_STATUS
+            #   value: "false"
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]

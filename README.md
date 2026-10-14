@@ -1,8 +1,8 @@
 # argobot
 
-A ConfigHub bot that syncs Argo CD applications, or Sveltos profiles.
+A ConfigHub bot that syncs Argo CD applications, Sveltos profiles, or Flux OCI sources.
 
-argobot listens on a ConfigHub Channel that subscribes to ConfigHub's event log. When ConfigHub records that a Release was published, argobot triggers a sync of the corresponding Argo CD Application (or, with `GITOPS_CONTROLLER=sveltos`, a redeploy of the Sveltos profile; see [Sveltos](#sveltos)), so the change takes effect immediately instead of waiting for the controller's next reconciliation.
+argobot listens on a ConfigHub Channel that subscribes to ConfigHub's event log. When ConfigHub records that a Release was published, argobot triggers a sync of the corresponding Argo CD Application (or, with `GITOPS_CONTROLLER=sveltos`, a redeploy of the Sveltos profile, see [Sveltos](#sveltos); or with `GITOPS_CONTROLLER=flux`, a reconciliation of the Flux OCIRepository, see [Flux](#flux)), so the change takes effect immediately instead of waiting for the controller's next reconciliation.
 
 This is a "bot" in the sense ConfigHub's Channels give the word: a process that claims a mailbox ConfigHub holds for it, rather than a Bridge worker. It is the pattern the Bridge is being replaced with.
 
@@ -49,6 +49,26 @@ Writes are coalesced per Application (a sync's burst of updates becomes one writ
 
 `manifests/sveltos/argobot.yaml` is the Sveltos deployment, for the Sveltos management cluster: a `ClusterRole` to `patch` ClusterProfiles and Profiles, the read-only `ClusterRole` extended to the `config.projectsveltos.io` and `lib.projectsveltos.io` API groups, a `HealthCheck` and `ClusterHealthCheck` that collect every object carrying `confighub.com/origin` across common kinds (extend `resourceSelectors` to cover the kinds your Releases contain), and the Deployment with `GITOPS_CONTROLLER=sveltos`. It is not part of the published config bundle.
 
+### Flux
+
+`GITOPS_CONTROLLER=flux` makes argobot drive [Flux](https://fluxcd.io/) (2.6 or later) instead of Argo CD. As with Sveltos, the Channel, event handling and the ConfigHub calls are the same, and the `ARGO_*`/`ARGOCD_*` variables are ignored. A Space is deployed by an `OCIRepository` pulling `oci://<gateway>/space/<slug>` with `ref.tag: latest` (the gateway serves only `latest` or a digest; `ref.semver` won't resolve) and a pull secret whose username is `token` and password a ConfigHub token, plus a `Kustomization` applying it. No `layerSelector` is needed: a Release is a single tar+gzip layer, which Flux extracts by default.
+
+**Forcing a sync.** argobot writes a new value (the current time) to the `reconcile.fluxcd.io/requestedAt` annotation of each OCIRepository that pulls the event's Space. source-controller resolves the tag again; if it points at a new Release, it stores the new artifact and kustomize-controller reconciles every Kustomization that applies the repository, so the Release reaches the cluster within seconds instead of at the repository's next `interval`. Like Sveltos, Flux leaves the annotation in place, which is why each sync writes a new value. The repositories are the OCIRepositories (named `<namespace>/<name>`) whose `spec.url` names the Space, plus the one named `<slug>`. If listing them fails, argobot tries `<slug>` in `FLUX_NAMESPACE`.
+
+**Live status.** Flux records the digests it fetched and applied, as Argo CD does: a Kustomization's `lastAppliedRevision` and `lastAttemptedRevision` are `<tag>@<digest>`, and each digest is a Release's `ManifestDigest`. argobot watches OCIRepositories and Kustomizations in every namespace, and writes each fact to the Release it is about, since a Release's `LiveStatus` describes that Release:
+
+- **The Release the cluster runs** gets the Kustomization's state: `Synced` once applied, health from the `Healthy` and `Ready` conditions, and operation `Failed` when `Ready=False` or `Stalled=True`, `Running` while `Reconciling=True`, `Succeeded` when `Ready=True`. Flux advances `lastAppliedRevision` only once a revision passes its health check, so a revision that was applied and is being checked (`Healthy=Unknown` while `Reconciling=True`), or failed the check (`HealthCheckFailed`), counts as running.
+- **A newer Release the Kustomization attempted but did not apply** (it failed to build or apply, or is on its way) gets `OutOfSync` with the operation `Failed` or `Running` and Flux's message. The Release still running meanwhile stays `Synced`.
+- **A Release the OCIRepository failed to pull** gets `OutOfSync`/`Failed` with the repository's message. That's the Space's newest published Release, which `latest` resolves to, or the pinned `ref.digest`, unless the cluster already runs or attempts it.
+- **A Release no longer run or attempted** is marked replaced (`OutOfSync`, message `Replaced by release N`), once argobot has reported on it for this repository (its `DataSource` names one of the repository's Kustomizations, or the repository) and something else runs. A Release that had failed keeps the operation `Failed`, Flux's reason, and its message after `Replaced by release N, after it failed:`. A published Release older than the one running that nothing reported on, such as one replaced before it was applied, is marked too. A Release already marked is left as is, apart from a `DataSource` an earlier version wrote without the Kustomization's kind, which is rewritten.
+
+The Kustomizations that apply one repository and speak about the same Release are combined into the least advanced state and written once. Each write is compared with the status the Release already has in ConfigHub, so an unchanged state, or a restart, writes nothing.
+
+- **Health checks.** Set `wait: true` (or `healthChecks`) on the Kustomization. Without one, Flux never judges the health of what it applied, and argobot reports health `Unknown`.
+- **One `LiveStatus` per Release.** Two OCIRepositories pulling the same Space, or one Release that several clusters run, write the same Release in turn. Clusters whose Kustomizations share a namespace and name, deploying one Space, would mark each other's Releases replaced.
+
+`manifests/flux/argobot.yaml` is the Flux deployment: a `ClusterRole` to `patch` OCIRepositories, the read-only `ClusterRole` extended to the `source.toolkit.fluxcd.io` and `kustomize.toolkit.fluxcd.io` API groups, the Deployment with `GITOPS_CONTROLLER=flux`, and an example OCIRepository and Kustomization in its comments. It is not part of the published config bundle.
+
 ## Configuration
 
 All configuration is via environment variables:
@@ -59,7 +79,8 @@ All configuration is via environment variables:
 | `CONFIGHUB_AUTH_PRIVATE_KEY` | yes | The service account key argobot authenticates with, as a private JWK (the file `cub serviceaccount key add --generate` writes) |
 | `CONFIGHUB_CHANNEL` | yes | The Channel argobot claims and polls, as `<space>/<slug>` or a UUID |
 | `CONFIGHUB_ASSERTION_AUDIENCE` | no | Only for a ConfigHub server that sets `CONFIGHUB_ASSERTION_AUDIENCE` to something other than its default; must match it. |
-| `GITOPS_CONTROLLER` | no | `argocd` (default) or `sveltos`. See [Sveltos](#sveltos). Every `ARGO_*`/`ARGOCD_*` variable below applies to `argocd` only. |
+| `GITOPS_CONTROLLER` | no | `argocd` (default), `sveltos` or `flux`. See [Sveltos](#sveltos) and [Flux](#flux). Every `ARGO_*`/`ARGOCD_*` variable below applies to `argocd` only. |
+| `FLUX_NAMESPACE` | no | _flux only._ Namespace of the OCIRepository named after a Space, tried when listing OCIRepositories fails. Defaults to `flux-system`. |
 | `ARGO_SYNC_MODE` | no | `kubernetes` (default) or `argocd`. See [Sync modes](#sync-modes). |
 | `ARGO_NAMESPACE` | no | _kubernetes mode._ Namespace holding the Argo CD Application resources. Defaults to `argocd`. |
 | `ARGO_REFRESH_TYPE` | no | _kubernetes mode._ `hard` (default) or `normal`. |
@@ -135,7 +156,7 @@ argobot runs in the cluster alongside Argo CD. `manifests/argobot.yaml` is a com
 
 RBAC comes in two parts. A **`Role`/`RoleBinding` in the Argo CD namespace** (`argocd` by default) grants read+write there — argobot patches an Application's refresh annotation to force a sync, and may manage other Argo CD resources; being namespaced, it grants nothing outside `argocd`. A **`ClusterRole`/`ClusterRoleBinding`** grants cluster-wide **read-only** (`get`/`list`/`watch`) for health/status reporting across all namespaces — deliberately **excluding Secrets** (the core API group is enumerated without `secrets`; other groups are wildcarded, and Secrets exist only in core). Add a CRD's API group to that second rule to extend coverage. The Namespace, ServiceAccount, and Deployment are argobot's own — adjust the namespaces to match your cluster.
 
-For Sveltos, deploy `manifests/sveltos/argobot.yaml` instead; see [Sveltos](#sveltos).
+For Sveltos, deploy `manifests/sveltos/argobot.yaml` instead; see [Sveltos](#sveltos). For Flux, deploy `manifests/flux/argobot.yaml`; see [Flux](#flux).
 
 ### Config bundle
 
@@ -173,7 +194,7 @@ docker run --rm ghcr.io/confighub/argobot:latest --print-subscriptions \
       --subscriptions - --permission Claim:serviceaccount:argobot-my-cluster
 ```
 
-4. **Argo CD's pull credentials.** If Argo CD's repo-creds Secret for the ConfigHub registry carries the worker ID and secret, set its `username` to `token` and its `password` to the token from step 1. Argo CD reads the Secret at its next pull, and the token is already valid, so no pull fails.
+4. **Argo CD's pull credentials.** If Argo CD's repo-creds Secret for the ConfigHub registry carries the worker ID and secret, set its `username` to `token` and its `password` to the token from step 1. Argo CD reads the Secret at its next pull, and the token is already valid, so no pull fails. Under Flux, do the same to the pull Secret each OCIRepository's `secretRef` names.
 5. **argobot's Secret.** Add `CONFIGHUB_AUTH_PRIVATE_KEY`, the contents of the `.jwk` file from step 1, to `argobot-secrets`. The 0.1 argobot ignores it.
 6. **The rollout.** Move the Deployment to the 0.2 image, set `CONFIGHUB_CHANNEL=my-cluster/argobot`, and drop the worker and subscription variables (left in place, they only warn). A one-replica Deployment keeps the 0.1 pod until the 0.2 pod is Ready, so a missing key or Claim shows up as a crash-looping new pod beside a working old one, and reverting the Deployment undoes it. `cub channel get argobot --space my-cluster` shows when the 0.2 argobot holds the Channel.
 7. **The worker.** Once the Channel is held, delete the worker with `cub worker delete`. This is the one step the rest cannot undo.

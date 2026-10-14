@@ -155,8 +155,9 @@ spec:
 
             # ── Controller ───────────────────────────────────────────────────
             # "argocd" (default) drives Argo CD Applications. "sveltos" drives
-            # Sveltos profiles instead and needs different RBAC; deploy
-            # manifests/sveltos/argobot.yaml for it.
+            # Sveltos profiles and "flux" Flux OCIRepositories instead; each
+            # needs different RBAC, so deploy manifests/sveltos/argobot.yaml or
+            # manifests/flux/argobot.yaml for it.
             - name: GITOPS_CONTROLLER
               value: "argocd"
 

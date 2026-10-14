@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	goclientnew "github.com/confighub/sdk/core/openapi/goclient-new"
 )
@@ -48,16 +49,16 @@ func makeEventHandler(syncer Syncer, cfg config) func(context.Context, *goclient
 		appNames := resolveAppNames(ctx, syncer, cfg, event)
 		if len(appNames) == 0 {
 			if slug := eventSpaceSlug(event); slug != "" {
-				log.Printf("[WARN] argobot: %s (%s) — no Argo app found for space %q; skipping.",
-					event.EventType, where, slug)
+				log.Printf("[WARN] argobot: %s (%s) — no %s sync target found for space %q; skipping.",
+					event.EventType, where, cfg.Controller, slug)
 				return
 			}
-			log.Printf("[WARN] argobot: %s (%s) — no Argo app resolved; skipping.", event.EventType, where)
+			log.Printf("[WARN] argobot: %s (%s) — no sync target resolved; skipping.", event.EventType, where)
 			return
 		}
 
 		for _, appName := range appNames {
-			log.Printf("[INFO] argobot: %s (%s) → syncing Argo app %q", event.EventType, where, appName)
+			log.Printf("[INFO] argobot: %s (%s) → syncing %s %q", event.EventType, where, cfg.Controller, appName)
 
 			if err := syncer.Sync(ctx, appName); err != nil {
 				log.Printf("[ERROR] argobot: sync of %q failed: %v", appName, err)
@@ -101,7 +102,8 @@ func resolveAppNames(ctx context.Context, syncer Syncer, cfg config, event *gocl
 	apps, err := syncer.RepoURLs(ctx)
 	if err != nil {
 		// Without the list, fall back to the convention rather than drop the event.
-		log.Printf("[WARN] argobot: listing Argo apps for space %q failed: %v; trying the app named %q", slug, err, slug)
+		log.Printf("[WARN] argobot: listing %s sync targets for space %q failed: %v; trying the one named %q",
+			cfg.Controller, slug, err, slug)
 		return []string{slug}
 	}
 	return appNamesForSpace(apps, slug)
@@ -109,10 +111,16 @@ func resolveAppNames(ctx context.Context, syncer Syncer, cfg config, event *gocl
 
 // appNamesForSpace returns, in name order, the Applications in apps (name ->
 // source repoURLs) that are named slug or whose source repoURL names the Space slug.
+// A namespaced key (<namespace>/<name>, as Sveltos Profiles and Flux
+// OCIRepositories have) is named slug when its name part is.
 func appNamesForSpace(apps map[string][]string, slug string) []string {
 	var names []string
 	for name, repoURLs := range apps {
-		if name == slug || slices.ContainsFunc(repoURLs, func(u string) bool { return spaceSlugFromRepoURL(u) == slug }) {
+		_, short, namespaced := strings.Cut(name, "/")
+		if !namespaced {
+			short = name
+		}
+		if short == slug || slices.ContainsFunc(repoURLs, func(u string) bool { return spaceSlugFromRepoURL(u) == slug }) {
 			names = append(names, name)
 		}
 	}
