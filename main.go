@@ -69,6 +69,18 @@ func main() {
 		return listener.Run(gctx)
 	})
 
+	// Once, at startup, store facts about the cluster on its Target. Like
+	// live-status reporting, it is best-effort: without cluster access or Edit
+	// on the Target, argobot warns and goes on syncing.
+	if cfg.Target != "" {
+		g.Go(func() error {
+			if err := collectTargetFacts(gctx, cfg, hub); err != nil && gctx.Err() == nil {
+				log.Printf("[WARN] cluster facts not collected: %v", err)
+			}
+			return nil
+		})
+	}
+
 	// Alongside the channel, optionally watch Argo CD Applications and report
 	// their live status back to ConfigHub. It needs Kubernetes access; if the
 	// client cannot be built (e.g. argocd sync mode with no cluster access), skip

@@ -32,9 +32,15 @@ Alongside reacting to events, argobot reports the other direction: it watches Ar
 
 argobot runs a Kubernetes informer over Argo CD Application CRs. Kubernetes watches cannot filter on what an Application deploys, so it watches every Application in the namespace and maps each to the ConfigHub Release it is running, in-process. An Application's OCI source (`.../space/<slug>`), or equivalently its name, names the deployment Space, and the revision Argo CD synced is the `ManifestDigest` of the Release it is running; the newest Release of the Space with that digest is the one. For each mapped Application, argobot writes the Release's `LiveStatus`: sync, health, and operation, normalized to ConfigHub's values with Argo CD's own words kept beside them, and a short message. An Application whose Space or Release does not resolve is ignored.
 
-argobot's access comes from grants on the Target its deployment Spaces release to: View and ViewChildren let it read the Spaces and their Releases, and EditChildren lets it write their `LiveStatus`. `cub cluster up` grants all three to the service account argobot runs as.
+argobot's access comes from grants on the Target its deployment Spaces release to: View and ViewChildren let it read the Spaces and their Releases, EditChildren lets it write their `LiveStatus`, and Edit lets it store [cluster facts](#cluster-facts) on the Target itself. `cub cluster up` grants all four to the service account argobot runs as.
 
 Writes are coalesced per Application (a sync's burst of updates becomes one write) and deduplicated against the last projection (an idle Application produces no write). Reporting is on by default and needs Kubernetes access; set `CONFIGHUB_REPORT_LIVE_STATUS=false` to disable it, and if the Kubernetes client cannot be built the reporter is skipped with a warning rather than failing the bot.
+
+### Cluster facts
+
+When `CONFIGHUB_TARGET` names the Target that represents the cluster, argobot collects facts about the cluster at startup and stores them on that Target, as `cub k8s collect` does: the Kubernetes version, the CRDs and built-in resource types it serves (by scope, as `group/version/Kind`), its storage classes and default storage class, and its ingress classes. They are kept under the reserved `Cluster.` prefix, which collection owns: argobot rewrites those facts and removes the ones the cluster no longer has, and leaves every fact outside the prefix alone. `Cluster.Name` cannot be discovered from the cluster, so argobot leaves it as it was (`cub k8s collect --cluster-name` sets it). The facts are then available to `where` filters, e.g. `Facts.Cluster.KubernetesVersion = '1.31.2'`.
+
+Collecting needs Kubernetes discovery and `list` on CustomResourceDefinitions, StorageClasses and IngressClasses, which the read-only `ClusterRole` grants, and Edit on the Target. Like live-status reporting, it is best-effort: if it fails, argobot logs a warning and goes on syncing. It runs once per start, so a cluster upgrade reaches the Target's facts when argobot next restarts. The facts describe the cluster argobot runs in, which under Sveltos is the management cluster. `cub cluster up` sets `CONFIGHUB_TARGET` to the cluster's Target.
 
 ### Sveltos
 
@@ -78,6 +84,7 @@ All configuration is via environment variables:
 | `CONFIGHUB_URL` | yes | ConfigHub base URL, e.g. `https://hub.confighub.com` |
 | `CONFIGHUB_AUTH_PRIVATE_KEY` | yes | The service account key argobot authenticates with, as a private JWK (the file `cub serviceaccount key add --generate` writes) |
 | `CONFIGHUB_CHANNEL` | yes | The Channel argobot claims and polls, as `<space>/<slug>` or a UUID |
+| `CONFIGHUB_TARGET` | no | The Target that represents the cluster, as `<space>/<slug>` or a UUID. When set, argobot stores facts about the cluster on it at startup; see [Cluster facts](#cluster-facts). Needs Edit on the Target. |
 | `CONFIGHUB_ASSERTION_AUDIENCE` | no | Only for a ConfigHub server that sets `CONFIGHUB_ASSERTION_AUDIENCE` to something other than its default; must match it. |
 | `GITOPS_CONTROLLER` | no | `argocd` (default), `sveltos` or `flux`. See [Sveltos](#sveltos) and [Flux](#flux). Every `ARGO_*`/`ARGOCD_*` variable below applies to `argocd` only. |
 | `FLUX_NAMESPACE` | no | _flux only._ Namespace of the OCIRepository named after a Space, tried when listing OCIRepositories fails. Defaults to `flux-system`. |
@@ -109,9 +116,11 @@ cub serviceaccount create argobot-my-cluster
 cub serviceaccount key add argobot-my-cluster --generate argobot-my-cluster
 
 # 2. Grant it the cluster's Target: View and ViewChildren to read the Spaces
-#    released to it, EditChildren to write their live status.
+#    released to it, EditChildren to write their live status, and Edit to
+#    store the cluster's facts on the Target.
 cub target update target --space my-cluster \
   --permission View:serviceaccount:argobot-my-cluster \
+  --permission Edit:serviceaccount:argobot-my-cluster \
   --permission ViewChildren:serviceaccount:argobot-my-cluster \
   --permission EditChildren:serviceaccount:argobot-my-cluster
 
@@ -123,12 +132,13 @@ argobot --print-subscriptions | cub channel create argobot --space my-cluster \
 
 A Channel created this way subscribes to deploys on every Space and Target. To react only to one cluster's deploys, scope the subscription to its Target with `cub channel update argobot --space my-cluster --subscriptions -`, giving the same JSON with a `TargetID`.
 
-Then run argobot with the key, naming the Channel. In the default `kubernetes` mode it uses the ambient Kubernetes credentials (in-cluster ServiceAccount, or your local kubeconfig) — no Argo CD token:
+Then run argobot with the key, naming the Channel and the cluster's Target. In the default `kubernetes` mode it uses the ambient Kubernetes credentials (in-cluster ServiceAccount, or your local kubeconfig) — no Argo CD token:
 
 ```sh
 CONFIGHUB_URL=https://hub.confighub.com \
 CONFIGHUB_AUTH_PRIVATE_KEY="$(cat ~/.confighub/keys/argobot-my-cluster.jwk)" \
 CONFIGHUB_CHANNEL=my-cluster/argobot \
+CONFIGHUB_TARGET=my-cluster/target \
 ARGO_NAMESPACE=argocd \
 ARGO_APP=my-app \
 argobot
@@ -140,6 +150,7 @@ To use the Argo CD REST API instead (deploys regardless of auto-sync), set `ARGO
 CONFIGHUB_URL=https://hub.confighub.com \
 CONFIGHUB_AUTH_PRIVATE_KEY="$(cat ~/.confighub/keys/argobot-my-cluster.jwk)" \
 CONFIGHUB_CHANNEL=my-cluster/argobot \
+CONFIGHUB_TARGET=my-cluster/target \
 ARGO_SYNC_MODE=argocd \
 ARGOCD_SERVER=https://argocd.example.com ARGOCD_AUTH_TOKEN=... \
 ARGO_APP=my-app \
@@ -179,10 +190,11 @@ cub serviceaccount create argobot-my-cluster
 cub serviceaccount key add argobot-my-cluster --generate argobot-my-cluster
 cub serviceaccount token create argobot-my-cluster
 
-# 2. The grants the worker has, now for the service account too. The worker
-#    keeps its own.
+# 2. The grants the worker has, now for the service account too, and Edit to
+#    store the cluster's facts on the Target. The worker keeps its own.
 cub target update target --space my-cluster \
   --permission View:serviceaccount:argobot-my-cluster \
+  --permission Edit:serviceaccount:argobot-my-cluster \
   --permission ViewChildren:serviceaccount:argobot-my-cluster \
   --permission EditChildren:serviceaccount:argobot-my-cluster
 

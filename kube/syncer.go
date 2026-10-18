@@ -68,9 +68,9 @@ func NewSyncer(cfg Config) (*Syncer, error) {
 // ServiceAccount and falling back to the local kubeconfig. It is shared by the
 // Syncer and the live-status reporter.
 func NewDynamicClient() (dynamic.Interface, error) {
-	restCfg, err := restConfig()
+	restCfg, err := RestConfig()
 	if err != nil {
-		return nil, fmt.Errorf("build kubernetes config: %w", err)
+		return nil, err
 	}
 	client, err := dynamic.NewForConfig(restCfg)
 	if err != nil {
@@ -79,14 +79,19 @@ func NewDynamicClient() (dynamic.Interface, error) {
 	return client, nil
 }
 
-// restConfig prefers in-cluster credentials and falls back to a kubeconfig file.
-func restConfig() (*rest.Config, error) {
+// RestConfig prefers in-cluster credentials and falls back to a kubeconfig
+// file. It is shared by everything in argobot that talks to the cluster.
+func RestConfig() (*rest.Config, error) {
 	if cfg, err := rest.InClusterConfig(); err == nil {
 		return cfg, nil
 	}
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("build kubernetes config: %w", err)
+	}
+	return cfg, nil
 }
 
 // Sync requests an Argo CD refresh of the named Application by patching its
