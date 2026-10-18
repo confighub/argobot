@@ -202,6 +202,15 @@ spec:
             - name: CONFIGHUB_CHANNEL
               value: "my-cluster/argobot"
 
+            # ── Cluster facts ────────────────────────────────────────────────
+            # The ConfigHub Target that represents this cluster, as
+            # <space>/<slug> or a UUID. When set, argobot collects facts about
+            # the cluster (Kubernetes version, served resource types, storage
+            # and ingress classes) at startup and stores them on the Target
+            # under "Cluster.". Needs Edit on the Target.
+            # - name: CONFIGHUB_TARGET
+            #   value: "my-cluster/target"
+
             # ── Application resolution ───────────────────────────────────────
             # Pin one Application for every event. Absent = resolve from the
             # event's Space slug (app-name == space-slug convention).

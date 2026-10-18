@@ -38,6 +38,12 @@ type config struct {
 	// Spaces and Targets — is the Channel's Subscriptions, set with cub, not here.
 	Channel string
 
+	// Target names the ConfigHub Target that represents the cluster argobot
+	// runs in, as <space>/<slug> or a UUID. When it is set, argobot collects
+	// facts about the cluster at startup and stores them on the Target; when it
+	// is not, it collects none.
+	Target string
+
 	// Controller selects the GitOps controller argobot drives: "argocd"
 	// (default), "sveltos" or "flux". The Argo* settings below apply to Argo CD
 	// only.
@@ -94,6 +100,7 @@ func loadConfig() (config, error) {
 		PrivateKey:        os.Getenv("CONFIGHUB_AUTH_PRIVATE_KEY"),
 		AssertionAudience: os.Getenv("CONFIGHUB_ASSERTION_AUDIENCE"),
 		Channel:           os.Getenv("CONFIGHUB_CHANNEL"),
+		Target:            os.Getenv("CONFIGHUB_TARGET"),
 		Controller:        os.Getenv("GITOPS_CONTROLLER"),
 		FluxNamespace:     os.Getenv("FLUX_NAMESPACE"),
 		ArgoSyncMode:      os.Getenv("ARGO_SYNC_MODE"),

@@ -63,10 +63,10 @@ SUMMARY (module — license type — source)
   gopkg.in/evanphx/json-patch.v4                          BSD-3-Clause https://github.com/evanphx/json-patch/blob/v4.13.0/LICENSE
   gopkg.in/inf.v0                                         BSD-3-Clause https://github.com/go-inf/inf/blob/v0.9.1/LICENSE
   gopkg.in/yaml.v3                                        MIT          https://github.com/go-yaml/yaml/blob/v3.0.1/LICENSE
-  k8s.io/api                                              Apache-2.0   https://github.com/kubernetes/api/blob/v0.35.0/LICENSE
-  k8s.io/apimachinery/pkg                                 Apache-2.0   https://github.com/kubernetes/apimachinery/blob/v0.35.0/LICENSE
-  k8s.io/apimachinery/third_party/forked/golang           BSD-3-Clause https://github.com/kubernetes/apimachinery/blob/v0.35.0/third_party/forked/golang/LICENSE
-  k8s.io/client-go                                        Apache-2.0   https://github.com/kubernetes/client-go/blob/v0.35.0/LICENSE
+  k8s.io/api                                              Apache-2.0   https://github.com/kubernetes/api/blob/v0.35.1/LICENSE
+  k8s.io/apimachinery/pkg                                 Apache-2.0   https://github.com/kubernetes/apimachinery/blob/v0.35.1/LICENSE
+  k8s.io/apimachinery/third_party/forked/golang           BSD-3-Clause https://github.com/kubernetes/apimachinery/blob/v0.35.1/third_party/forked/golang/LICENSE
+  k8s.io/client-go                                        Apache-2.0   https://github.com/kubernetes/client-go/blob/v0.35.1/LICENSE
   k8s.io/klog/v2                                          Apache-2.0   https://github.com/kubernetes/klog/blob/v2.130.1/LICENSE
   k8s.io/kube-openapi/pkg                                 Apache-2.0   https://github.com/kubernetes/kube-openapi/blob/589584f1c912/LICENSE
   k8s.io/kube-openapi/pkg/internal/third_party/go-json-experiment/json BSD-3-Clause https://github.com/kubernetes/kube-openapi/blob/589584f1c912/pkg/internal/third_party/go-json-experiment/json/LICENSE
@@ -75,7 +75,7 @@ SUMMARY (module — license type — source)
   k8s.io/utils/internal/third_party/forked/golang/net     BSD-3-Clause https://github.com/kubernetes/utils/blob/bc988d571ff4/internal/third_party/forked/golang/LICENSE
   sigs.k8s.io/json                                        Apache-2.0   https://github.com/kubernetes-sigs/json/blob/2d320260d730/LICENSE
   sigs.k8s.io/json                                        BSD-3-Clause https://github.com/kubernetes-sigs/json/blob/2d320260d730/LICENSE
-  sigs.k8s.io/kustomize/kyaml                             Apache-2.0   https://github.com/kubernetes-sigs/kustomize/blob/kyaml/v0.18.1/kyaml/LICENSE
+  sigs.k8s.io/kustomize/kyaml                             Apache-2.0   https://github.com/kubernetes-sigs/kustomize/blob/kyaml/v0.19.0/kyaml/LICENSE
   sigs.k8s.io/randfill                                    Apache-2.0   https://github.com/kubernetes-sigs/randfill/blob/v1.0.0/LICENSE
   sigs.k8s.io/structured-merge-diff/v6                    Apache-2.0   https://github.com/kubernetes-sigs/structured-merge-diff/blob/v6.3.0/LICENSE
   sigs.k8s.io/yaml                                        Apache-2.0   https://github.com/kubernetes-sigs/yaml/blob/v1.6.0/LICENSE
@@ -4285,7 +4285,7 @@ limitations under the License.
 --------------------------------------------------------------------------------
 Module:  k8s.io/api
 License: Apache-2.0
-Source:  https://github.com/kubernetes/api/blob/v0.35.0/LICENSE
+Source:  https://github.com/kubernetes/api/blob/v0.35.1/LICENSE
 --------------------------------------------------------------------------------
 
 
@@ -4495,7 +4495,7 @@ Source:  https://github.com/kubernetes/api/blob/v0.35.0/LICENSE
 --------------------------------------------------------------------------------
 Module:  k8s.io/apimachinery/pkg
 License: Apache-2.0
-Source:  https://github.com/kubernetes/apimachinery/blob/v0.35.0/LICENSE
+Source:  https://github.com/kubernetes/apimachinery/blob/v0.35.1/LICENSE
 --------------------------------------------------------------------------------
 
 
@@ -4705,7 +4705,7 @@ Source:  https://github.com/kubernetes/apimachinery/blob/v0.35.0/LICENSE
 --------------------------------------------------------------------------------
 Module:  k8s.io/apimachinery/third_party/forked/golang
 License: BSD-3-Clause
-Source:  https://github.com/kubernetes/apimachinery/blob/v0.35.0/third_party/forked/golang/LICENSE
+Source:  https://github.com/kubernetes/apimachinery/blob/v0.35.1/third_party/forked/golang/LICENSE
 --------------------------------------------------------------------------------
 
 Copyright (c) 2009 The Go Authors. All rights reserved.
@@ -4740,7 +4740,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 Module:  k8s.io/client-go
 License: Apache-2.0
-Source:  https://github.com/kubernetes/client-go/blob/v0.35.0/LICENSE
+Source:  https://github.com/kubernetes/client-go/blob/v0.35.1/LICENSE
 --------------------------------------------------------------------------------
 
 
@@ -6341,7 +6341,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 Module:  sigs.k8s.io/kustomize/kyaml
 License: Apache-2.0
-Source:  https://github.com/kubernetes-sigs/kustomize/blob/kyaml/v0.18.1/kyaml/LICENSE
+Source:  https://github.com/kubernetes-sigs/kustomize/blob/kyaml/v0.19.0/kyaml/LICENSE
 --------------------------------------------------------------------------------
 
                                  Apache License
