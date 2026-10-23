@@ -53,7 +53,7 @@ Collecting needs Kubernetes discovery and `list` on CustomResourceDefinitions, S
 - **Coverage.** The HealthCheck must select at least one object of every Unit, or argobot can't tell which revision of an unselected Unit is running and reports nothing for that Space. Reports also have a size limit (a Kubernetes object is capped at about 1.5 MiB): for big Releases, select one small object per Unit rather than everything, or split the check.
 - **One report per cluster, one `LiveStatus` per Release.** With one profile per variant per cluster, as `cub cluster up` sets up, these coincide. A Release that several clusters run is written by each cluster's report in turn.
 
-`manifests/sveltos/argobot.yaml` is the Sveltos deployment, for the Sveltos management cluster: a `ClusterRole` to `patch` ClusterProfiles and Profiles, the read-only `ClusterRole` extended to the `config.projectsveltos.io` and `lib.projectsveltos.io` API groups, a `HealthCheck` and `ClusterHealthCheck` that collect every object carrying `confighub.com/origin` across common kinds (extend `resourceSelectors` to cover the kinds your Releases contain), and the Deployment with `GITOPS_CONTROLLER=sveltos`. It is not part of the published config bundle.
+`manifests/sveltos/argobot.yaml` is the Sveltos deployment, for the Sveltos management cluster: a `ClusterRole` to `patch` ClusterProfiles and Profiles, the read-only `ClusterRole` extended to the `config.projectsveltos.io` and `lib.projectsveltos.io` API groups, a `HealthCheck` and `ClusterHealthCheck` that collect every object carrying `confighub.com/origin` across common kinds (extend `resourceSelectors` to cover the kinds your Releases contain), and the Deployment with `GITOPS_CONTROLLER=sveltos`. `argobot install --controller sveltos` prints it.
 
 ### Flux
 
@@ -73,7 +73,7 @@ The Kustomizations that apply one repository and speak about the same Release ar
 - **Health checks.** Set `wait: true` (or `healthChecks`) on the Kustomization. Without one, Flux never judges the health of what it applied, and argobot reports health `Unknown`.
 - **One `LiveStatus` per Release.** Two OCIRepositories pulling the same Space, or one Release that several clusters run, write the same Release in turn. Clusters whose Kustomizations share a namespace and name, deploying one Space, would mark each other's Releases replaced.
 
-`manifests/flux/argobot.yaml` is the Flux deployment: a `ClusterRole` to `patch` OCIRepositories, the read-only `ClusterRole` extended to the `source.toolkit.fluxcd.io` and `kustomize.toolkit.fluxcd.io` API groups, the Deployment with `GITOPS_CONTROLLER=flux`, and an example OCIRepository and Kustomization in its comments. It is not part of the published config bundle.
+`manifests/flux/argobot.yaml` is the Flux deployment: a `ClusterRole` to `patch` OCIRepositories, the read-only `ClusterRole` extended to the `source.toolkit.fluxcd.io` and `kustomize.toolkit.fluxcd.io` API groups, the Deployment with `GITOPS_CONTROLLER=flux`, and an example OCIRepository and Kustomization in its comments. `argobot install --controller flux` prints it.
 
 ## Configuration
 
@@ -163,20 +163,27 @@ A `cub unit apply` or a `cub release publish` for a (Space, Target) the Channel 
 
 ## Deploy
 
-argobot runs in the cluster alongside Argo CD. `manifests/argobot.yaml` is a complete, self-documenting deployment: a Namespace, a ServiceAccount, its RBAC (see below), and a Deployment whose `env` list carries **every** supported variable — defaults filled in, and the ones that must be absent by default commented out. The Deployment reads its credentials from a Secret named `argobot-secrets` via `secretKeyRef`; that Secret is intentionally **not** part of the manifest — supply it out of band (secret store / External Secrets, or `kubectl create secret generic argobot-secrets --from-literal=...`) so the bundle never ships or overwrites credential material. Expected keys: `CONFIGHUB_AUTH_PRIVATE_KEY` (the private JWK) and (argocd mode only) `ARGOCD_AUTH_TOKEN`.
+argobot runs in the cluster alongside Argo CD. `manifests/argobot.yaml` is a complete, self-documenting deployment: a Namespace, a ServiceAccount, its RBAC (see below), and a Deployment whose `env` list carries **every** supported variable — defaults filled in, and the ones that must be absent by default commented out. The Deployment reads its credentials from a Secret named `argobot-secrets` via `secretKeyRef`; that Secret is intentionally **not** part of the manifest — supply it out of band (secret store / External Secrets, or `kubectl create secret generic argobot-secrets --from-literal=...`) so the manifest never ships or overwrites credential material. Expected keys: `CONFIGHUB_AUTH_PRIVATE_KEY` (the private JWK) and (argocd mode only) `ARGOCD_AUTH_TOKEN`.
 
 RBAC comes in two parts. A **`Role`/`RoleBinding` in the Argo CD namespace** (`argocd` by default) grants read+write there — argobot patches an Application's refresh annotation to force a sync, and may manage other Argo CD resources; being namespaced, it grants nothing outside `argocd`. A **`ClusterRole`/`ClusterRoleBinding`** grants cluster-wide **read-only** (`get`/`list`/`watch`) for health/status reporting across all namespaces — deliberately **excluding Secrets** (the core API group is enumerated without `secrets`; other groups are wildcarded, and Secrets exist only in core). Add a CRD's API group to that second rule to extend coverage. The Namespace, ServiceAccount, and Deployment are argobot's own — adjust the namespaces to match your cluster.
 
 For Sveltos, deploy `manifests/sveltos/argobot.yaml` instead; see [Sveltos](#sveltos). For Flux, deploy `manifests/flux/argobot.yaml`; see [Flux](#flux).
 
-### Config bundle
+### Install
 
-`.github/workflows/release.yml` packages `manifests/` into an OCI bundle and pushes it to `ghcr.io/confighub/configs/argobot:latest`. The bundle **floats** — a single moving `:latest` — but each cut pins a concrete released image: the committed manifest carries `argobot:latest`, and the workflow substitutes it with the current released version (resolved from git tags) before publishing, failing the build if the pin does not take. Load it into ConfigHub as a component base:
+The three manifests are built into the binary. `argobot install` prints the one for a controller, with the image pinned to the argobot version that printed it (a development build pins `latest`), for `kubectl apply` or for loading into ConfigHub:
 
 ```sh
-cub variant upload --component argobot --variant base --granularity per-file \
-  oci://ghcr.io/confighub/configs/argobot
+docker run --rm ghcr.io/confighub/argobot:v0.3.0 install --controller flux | kubectl apply -f -
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--controller` | `argocd` | `argo` or `argocd` for `manifests/argobot.yaml`, `flux` for `manifests/flux/argobot.yaml`, `sveltos` for `manifests/sveltos/argobot.yaml`. |
+| `--image` | `ghcr.io/confighub/argobot` | The image repository the Deployment runs. |
+| `--tag` | the binary's version | The image tag the Deployment runs. |
+
+This replaces the config bundle that `release.yml` used to publish to `ghcr.io/confighub/configs/argobot`, which carried only the Argo CD manifest. The Secret is still not part of the output.
 
 ## Upgrading from 0.1
 
@@ -223,6 +230,6 @@ docker build -t ghcr.io/confighub/argobot:dev .
 Two workflows, two cadences:
 
 - `.github/workflows/build.yml` builds and pushes **development** images to `ghcr.io/confighub/argobot` on pushes to `main` and on PRs (tags `main`, `pr-N`, `sha-…`). No semver, no `:latest`.
-- `.github/workflows/release.yml` cuts a **release** when you push a `vX.Y.Z` git tag: it builds the semver image (`:vX.Y.Z`, plus `:latest`) and republishes the config bundle pinned to it. The bundle is also republished on every `main` push, pinned to the current latest tag, so a config-only change ships without a new image. The pinned version is never committed, so there is no commit-to-release cycle.
+- `.github/workflows/release.yml` cuts a **release** when you push a `vX.Y.Z` git tag: it builds the semver image (`:vX.Y.Z`, plus `:latest`) with the tag stamped in as the binary's version, so `argobot install` in that image pins the Deployment to that image. A manifest change ships with the next release.
 
 Every image carries its third-party notices at `/app/THIRD_PARTY_LICENSES.txt` (Go modules linked into the binary) and `/app/OS_LICENSE_NOTICE.txt` (Alpine base packages, with the GPL source offer), and every published manifest has an SPDX SBOM attestation (`docker buildx imagetools inspect ghcr.io/confighub/argobot:<tag> --format '{{json .SBOM}}'`). After changing dependencies, run `./scripts/gen-third-party-licenses.sh` and commit the result; `.github/workflows/third-party-licenses.yml` fails the PR if the committed file is stale or a copyleft dependency is linked in.

@@ -28,7 +28,10 @@ RUN go mod download
 COPY . .
 ARG TARGETOS
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /go/bin/argobot .
+# VERSION is the release the binary reports; `argobot install` pins its image
+# to it. release.yml passes the git tag; any other build is "dev".
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags "-X main.version=${VERSION}" -o /go/bin/argobot .
 
 #################
 # Runtime stage #

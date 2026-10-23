@@ -18,8 +18,8 @@
 # argobot needs Flux 2.6 or later, which serves OCIRepository as
 # source.toolkit.fluxcd.io/v1.
 #
-# The release workflow publishes only manifests/*.yaml as the config bundle, so
-# this variant is not part of ghcr.io/confighub/configs/argobot.
+# `argobot install --controller flux` prints this manifest with the image pinned
+# to that argobot's version.
 #
 # A Space is deployed by an OCIRepository pulling it from the ConfigHub OCI
 # gateway, and a Kustomization applying it. For example:

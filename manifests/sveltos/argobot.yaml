@@ -16,8 +16,8 @@
 # argobot-secrets --from-literal=...`). Expected key: CONFIGHUB_AUTH_PRIVATE_KEY
 # (the service account's private JWK).
 #
-# The release workflow publishes only manifests/*.yaml as the config bundle, so
-# this variant is not part of ghcr.io/confighub/configs/argobot.
+# `argobot install --controller sveltos` prints this manifest with the image pinned
+# to that argobot's version.
 apiVersion: v1
 kind: Namespace
 metadata:
