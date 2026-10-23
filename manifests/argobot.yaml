@@ -12,8 +12,7 @@
 # band (your secret store / External Secrets, or `kubectl create secret generic
 # argobot-secrets --from-literal=...`). Keeping credential material out of this
 # manifest lets it float through GitOps without shipping or overwriting secrets.
-# Expected keys: CONFIGHUB_AUTH_PRIVATE_KEY (the service account's private JWK)
-# and — only when ARGO_SYNC_MODE=argocd — ARGOCD_AUTH_TOKEN.
+# Expected key: CONFIGHUB_AUTH_PRIVATE_KEY (the service account's private JWK).
 #
 # argobot runs in its own `argobot` namespace; its RBAC to sync Argo CD
 # Applications lives in the `argocd` namespace (assumed to already exist — this
@@ -29,8 +28,8 @@ metadata:
   name: argobot
   namespace: argobot
 ---
-# argobot's control-plane namespace. In the default kubernetes sync mode it
-# patches the Application's refresh annotation to force a sync, and it may manage
+# argobot's control-plane namespace. It patches the Application's refresh
+# annotation to force a sync, and it may manage
 # other Argo CD resources here — so it gets read+write across the Argo CD
 # namespace. This is a namespaced Role, so it grants nothing outside `argocd`.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -161,14 +160,9 @@ spec:
             - name: GITOPS_CONTROLLER
               value: "argocd"
 
-            # ── Sync mode ────────────────────────────────────────────────────
-            # "kubernetes" (default) patches the Application's refresh annotation
-            # via the Kubernetes API (deploys only if auto-sync is enabled);
-            # "argocd" calls the Argo CD REST API (deploys unconditionally).
-            - name: ARGO_SYNC_MODE
-              value: "kubernetes"
-
-            # ── Kubernetes sync mode ─────────────────────────────────────────
+            # ── Argo CD sync ─────────────────────────────────────────────────
+            # argobot patches the Application's refresh annotation via the
+            # Kubernetes API (deploys only if auto-sync is enabled).
             # Namespace holding the Argo CD Application resources.
             - name: ARGO_NAMESPACE
               value: "argocd"
@@ -176,24 +170,6 @@ spec:
             # "normal".
             - name: ARGO_REFRESH_TYPE
               value: "hard"
-
-            # ── Argo CD REST sync mode (only when ARGO_SYNC_MODE=argocd) ──────
-            # - name: ARGOCD_SERVER
-            #   value: "https://argocd.example.com"
-            # - name: ARGOCD_INSECURE
-            #   value: "false"
-            # - name: ARGOCD_AUTH_TOKEN
-            #   valueFrom:
-            #     secretKeyRef:
-            #       name: argobot-secrets
-            #       key: ARGOCD_AUTH_TOKEN
-            # Application namespace passed to the REST sync (apps-in-any-namespace).
-            # - name: ARGO_APP_NAMESPACE
-            #   value: ""
-            # - name: ARGO_PRUNE
-            #   value: "false"
-            # - name: ARGO_FORCE
-            #   value: "false"
 
             # ── Channel ──────────────────────────────────────────────────────
             # The ConfigHub Channel argobot claims and polls, as <space>/<slug>

@@ -13,8 +13,9 @@ import (
 // config holds argobot's runtime configuration, all sourced from the environment.
 //
 // The ConfigHub key identifies argobot to ConfigHub; the Channel is the mailbox
-// it listens on. The Argo CD credentials are argobot's own authority against
-// Argo CD — held out of band, never brokered through ConfigHub.
+// it listens on. Its authority against the GitOps controller is the Kubernetes
+// ServiceAccount it runs as (or a local kubeconfig), never brokered through
+// ConfigHub.
 //
 // argobot reacts to the ConfigHub events its Channel subscribes to: release
 // facts, scoped on the Channel to whatever Spaces or Targets the
@@ -53,27 +54,14 @@ type config struct {
 	// up (defaults to "flux-system"). Flux only.
 	FluxNamespace string
 
-	// ArgoSyncMode selects how argobot triggers a sync: "kubernetes" (default)
-	// patches the Application's refresh annotation via the Kubernetes API;
-	// "argocd" calls the Argo CD REST /sync endpoint.
-	ArgoSyncMode string
-
-	ArgoServer   string
-	ArgoToken    string
-	ArgoInsecure bool
-
-	// Kubernetes-mode settings. ArgoNamespace is where the Application resources
-	// live (defaults to "argocd"). ArgoRefreshType is "hard" or "normal".
+	// ArgoNamespace is where the Application resources live (defaults to
+	// "argocd"). ArgoRefreshType is "hard" or "normal".
 	ArgoNamespace   string
 	ArgoRefreshType string
 
-	// Force-sync behaviour. ArgoApp, when set, is the single Application every
-	// matching event force-syncs (the simplest deployment). AppNamespace, Prune,
-	// and Force are passed through to the sync request.
-	ArgoApp          string
-	ArgoAppNamespace string
-	ArgoPrune        bool
-	ArgoForce        bool
+	// ArgoApp, when set, is the single Application every matching event
+	// force-syncs (the simplest deployment).
+	ArgoApp string
 
 	// ReportLiveStatus enables the reporter that watches Argo CD Applications and
 	// writes their status back to the Release each one is running. On by default;
@@ -83,8 +71,8 @@ type config struct {
 	ReportLiveStatus bool
 }
 
-// retiredEnv names the variables argobot read when it connected as a worker, each
-// with why it no longer does. One that is still set is ignored with a warning
+// retiredEnv names the variables argobot read when it connected as a worker or
+// could sync through the Argo CD REST API, each with why it no longer does. One that is still set is ignored with a warning
 // rather than silently: a deployment that sets it expects it to do something.
 var retiredEnv = []struct{ name, reason string }{
 	{"CONFIGHUB_WORKER_ID", "argobot authenticates with the service account key in CONFIGHUB_AUTH_PRIVATE_KEY"},
@@ -92,6 +80,13 @@ var retiredEnv = []struct{ name, reason string }{
 	{"CONFIGHUB_SUBSCRIPTION_NAME", "the events argobot receives are the Subscriptions of its channel"},
 	{"CONFIGHUB_EVENT_SPACE_ID", "the events argobot receives are the Subscriptions of its channel"},
 	{"CONFIGHUB_EVENT_TARGET_ID", "the events argobot receives are the Subscriptions of its channel"},
+	{"ARGO_SYNC_MODE", "argobot syncs Argo CD Applications through the Kubernetes API only"},
+	{"ARGOCD_SERVER", "argobot syncs Argo CD Applications through the Kubernetes API only"},
+	{"ARGOCD_AUTH_TOKEN", "argobot syncs Argo CD Applications through the Kubernetes API only"},
+	{"ARGOCD_INSECURE", "argobot syncs Argo CD Applications through the Kubernetes API only"},
+	{"ARGO_APP_NAMESPACE", "argobot syncs Argo CD Applications through the Kubernetes API only; set ARGO_NAMESPACE"},
+	{"ARGO_PRUNE", "argobot syncs Argo CD Applications through the Kubernetes API only; set prune in the Application's syncPolicy"},
+	{"ARGO_FORCE", "argobot syncs Argo CD Applications through the Kubernetes API only"},
 }
 
 func loadConfig() (config, error) {
@@ -103,23 +98,13 @@ func loadConfig() (config, error) {
 		Target:            os.Getenv("CONFIGHUB_TARGET"),
 		Controller:        os.Getenv("GITOPS_CONTROLLER"),
 		FluxNamespace:     os.Getenv("FLUX_NAMESPACE"),
-		ArgoSyncMode:      os.Getenv("ARGO_SYNC_MODE"),
-		ArgoServer:        strings.TrimRight(os.Getenv("ARGOCD_SERVER"), "/"),
-		ArgoToken:         os.Getenv("ARGOCD_AUTH_TOKEN"),
-		ArgoInsecure:      os.Getenv("ARGOCD_INSECURE") == "true",
 		ArgoNamespace:     os.Getenv("ARGO_NAMESPACE"),
 		ArgoRefreshType:   os.Getenv("ARGO_REFRESH_TYPE"),
 		ArgoApp:           os.Getenv("ARGO_APP"),
-		ArgoAppNamespace:  os.Getenv("ARGO_APP_NAMESPACE"),
-		ArgoPrune:         os.Getenv("ARGO_PRUNE") == "true",
-		ArgoForce:         os.Getenv("ARGO_FORCE") == "true",
 		ReportLiveStatus:  os.Getenv("CONFIGHUB_REPORT_LIVE_STATUS") != "false",
 	}
 	if cfg.Controller == "" {
 		cfg.Controller = ControllerArgoCD
-	}
-	if cfg.ArgoSyncMode == "" {
-		cfg.ArgoSyncMode = SyncModeKubernetes
 	}
 	if cfg.ArgoNamespace == "" {
 		cfg.ArgoNamespace = "argocd"
@@ -135,25 +120,14 @@ func loadConfig() (config, error) {
 	}
 	switch cfg.Controller {
 	case ControllerArgoCD:
-		switch cfg.ArgoSyncMode {
-		case SyncModeKubernetes:
-			// No extra required vars: in-cluster credentials come from the
-			// ServiceAccount, and ARGO_NAMESPACE has a default.
-		case SyncModeArgoCD:
-			required["ARGOCD_SERVER"] = cfg.ArgoServer
-			required["ARGOCD_AUTH_TOKEN"] = cfg.ArgoToken
-		default:
-			return config{}, fmt.Errorf("invalid ARGO_SYNC_MODE %q: must be %q or %q",
-				cfg.ArgoSyncMode, SyncModeKubernetes, SyncModeArgoCD)
-		}
+		// No extra required vars: in-cluster credentials come from the
+		// ServiceAccount, and ARGO_NAMESPACE has a default.
 	case ControllerSveltos, ControllerFlux:
 		// No extra required vars: in-cluster credentials come from the
-		// ServiceAccount. The ARGO_*/ARGOCD_* settings are Argo-only; clear them so
-		// none of them, ARGO_APP above all, changes what a Sveltos or Flux
-		// deployment syncs.
-		cfg.ArgoSyncMode, cfg.ArgoApp, cfg.ArgoAppNamespace = "", "", ""
-		cfg.ArgoServer, cfg.ArgoToken, cfg.ArgoNamespace, cfg.ArgoRefreshType = "", "", "", ""
-		cfg.ArgoInsecure, cfg.ArgoPrune, cfg.ArgoForce = false, false, false
+		// ServiceAccount. The ARGO_* settings are Argo-only; clear them so none of
+		// them, ARGO_APP above all, changes what a Sveltos or Flux deployment
+		// syncs.
+		cfg.ArgoApp, cfg.ArgoNamespace, cfg.ArgoRefreshType = "", "", ""
 	default:
 		return config{}, fmt.Errorf("invalid GITOPS_CONTROLLER %q: must be %q, %q or %q",
 			cfg.Controller, ControllerArgoCD, ControllerSveltos, ControllerFlux)

@@ -15,14 +15,9 @@ argobot claims a ConfigHub Channel and polls it:
 - On a delivered event it resolves which Argo CD Application to sync (see below) and triggers a sync. The reaction is argobot's own; the event only says the desired state for a (Space, Target) changed. An event of another type, which a Channel subscribed more widely would deliver, is logged and skipped.
 - The Channel bookmarks how far it has read, so a restart resumes where it left off without argobot keeping any local state. A new Channel starts at the tail of the log.
 
-### Sync modes
+Forcing a sync. argobot patches the Application's `argocd.argoproj.io/refresh` annotation through the Kubernetes API. Argo re-compares the Application against its source (a **hard** refresh re-resolves the source, including an OCI tag→digest, so Argo picks up a freshly published bundle rather than replaying a cached digest) and then, **if the Application has auto-sync enabled, deploys**. If auto-sync is off, argobot's refresh does not deploy — auto-sync is the deploy gate. Credentials are the pod's ServiceAccount; there is no Argo CD API token to set up.
 
-`ARGO_SYNC_MODE` selects how argobot triggers the sync:
-
-- **`kubernetes`** (default) — argobot patches the Application's `argocd.argoproj.io/refresh` annotation through the Kubernetes API. Argo re-compares the Application against its source (a **hard** refresh re-resolves the source, including an OCI tag→digest, so Argo picks up a freshly published bundle rather than replaying a cached digest) and then, **if the Application has auto-sync enabled, deploys**. If auto-sync is off, argobot's refresh does not deploy — auto-sync is the deploy gate. Credentials are the pod's ServiceAccount; there is no Argo CD API token to set up.
-- **`argocd`** — argobot calls the Argo CD REST `/api/v1/applications/{name}/sync` endpoint. This deploys **regardless** of the Application's auto-sync setting. It needs an Argo CD API base URL and bearer token, which are argobot's own authority, supplied by environment and never brokered through ConfigHub.
-
-Resolving the Application. When `ARGO_APP` is set, it is the single Application every matching event syncs — the simplest deployment. When it is not set, the event's Space slug is resolved to every Application in `ARGO_NAMESPACE` whose OCI source names that Space — a `spec.source.repoURL` or any `spec.sources[].repoURL` ending in `/space/<slug>` — plus the Application named `<slug>`, by the app-name == space-slug convention. Each Application is synced once. Matching by source finds Applications that kept the name Argo CD gave them when `cub argo` moved them onto ConfigHub (for example Application `dev-1-apptique` reading `oci://gw/space/argo-apptique-dev-1`). If no Application is found, argobot logs a warning naming the slug and skips the event. argobot lists the Applications on each event (`list` on Application resources in `kubernetes` mode; `GET /api/v1/applications`, scoped to `ARGO_APP_NAMESPACE` when set, in `argocd` mode); if the list fails it logs a warning and falls back to the Application named `<slug>`.
+Resolving the Application. When `ARGO_APP` is set, it is the single Application every matching event syncs — the simplest deployment. When it is not set, the event's Space slug is resolved to every Application in `ARGO_NAMESPACE` whose OCI source names that Space — a `spec.source.repoURL` or any `spec.sources[].repoURL` ending in `/space/<slug>` — plus the Application named `<slug>`, by the app-name == space-slug convention. Each Application is synced once. Matching by source finds Applications that kept the name Argo CD gave them when `cub argo` moved them onto ConfigHub (for example Application `dev-1-apptique` reading `oci://gw/space/argo-apptique-dev-1`). If no Application is found, argobot logs a warning naming the slug and skips the event. argobot lists the Applications in `ARGO_NAMESPACE` through the Kubernetes API on each event; if the list fails it logs a warning and falls back to the Application named `<slug>`.
 
 Correctness belongs to Argo CD: it reconciles from its source regardless, so a missed or failed sync only loses immediacy, not correctness.
 
@@ -44,7 +39,7 @@ Collecting needs Kubernetes discovery and `list` on CustomResourceDefinitions, S
 
 ### Sveltos
 
-`GITOPS_CONTROLLER=sveltos` makes argobot drive [Sveltos](https://projectsveltos.github.io/sveltos/) instead of Argo CD. Event handling, the Channel and the ConfigHub calls are the same; the two Argo-facing parts change. The `ARGO_*`/`ARGOCD_*` variables are Argo CD only and are ignored.
+`GITOPS_CONTROLLER=sveltos` makes argobot drive [Sveltos](https://projectsveltos.github.io/sveltos/) instead of Argo CD. Event handling, the Channel and the ConfigHub calls are the same; the two Argo-facing parts change. The `ARGO_*` variables are Argo CD only and are ignored.
 
 **Forcing a sync.** argobot writes a new value (the current time) to the `profile.projectsveltos.io/redeploy` annotation of each profile that deploys the event's Space. Any change of value redeploys every ClusterSummary the profile manages, which fetches its `remoteURL` again, so a new Release reaches the cluster within seconds instead of at the profile's next poll; a redeploy with no new Release writes no objects. Unlike Argo's refresh annotation, Sveltos leaves the annotation in place, which is why each sync writes a new value. Sveltos ignores it for profiles with `syncMode: OneTime`. The profiles are the ClusterProfiles (cluster-scoped, named by their name) and Profiles (named `<namespace>/<name>`) whose `spec.policyRefs[].remoteURL.url` or `spec.kustomizationRefs[].remoteURL.url` names the Space — Sveltos keeps the tag in the URL (`.../space/<slug>:latest`), and a trailing `:<tag>` or `@<digest>` is ignored — plus the ClusterProfile named `<slug>`. On a ClusterProfile the annotation redeploys every cluster the profile selects. Under `cub cluster up` the child ClusterProfiles are applied by a root profile; Sveltos keeps argobot's annotation when the root reapplies a child.
 
@@ -57,7 +52,7 @@ Collecting needs Kubernetes discovery and `list` on CustomResourceDefinitions, S
 
 ### Flux
 
-`GITOPS_CONTROLLER=flux` makes argobot drive [Flux](https://fluxcd.io/) (2.6 or later) instead of Argo CD. As with Sveltos, the Channel, event handling and the ConfigHub calls are the same, and the `ARGO_*`/`ARGOCD_*` variables are ignored. A Space is deployed by an `OCIRepository` pulling `oci://<gateway>/space/<slug>` with `ref.tag: latest` (the gateway serves only `latest` or a digest; `ref.semver` won't resolve) and a pull secret whose username is `token` and password a ConfigHub token, plus a `Kustomization` applying it. No `layerSelector` is needed: a Release is a single tar+gzip layer, which Flux extracts by default.
+`GITOPS_CONTROLLER=flux` makes argobot drive [Flux](https://fluxcd.io/) (2.6 or later) instead of Argo CD. As with Sveltos, the Channel, event handling and the ConfigHub calls are the same, and the `ARGO_*` variables are ignored. A Space is deployed by an `OCIRepository` pulling `oci://<gateway>/space/<slug>` with `ref.tag: latest` (the gateway serves only `latest` or a digest; `ref.semver` won't resolve) and a pull secret whose username is `token` and password a ConfigHub token, plus a `Kustomization` applying it. No `layerSelector` is needed: a Release is a single tar+gzip layer, which Flux extracts by default.
 
 **Forcing a sync.** argobot writes a new value (the current time) to the `reconcile.fluxcd.io/requestedAt` annotation of each OCIRepository that pulls the event's Space. source-controller resolves the tag again; if it points at a new Release, it stores the new artifact and kustomize-controller reconciles every Kustomization that applies the repository, so the Release reaches the cluster within seconds instead of at the repository's next `interval`. Like Sveltos, Flux leaves the annotation in place, which is why each sync writes a new value. The repositories are the OCIRepositories (named `<namespace>/<name>`) whose `spec.url` names the Space, plus the one named `<slug>`. If listing them fails, argobot tries `<slug>` in `FLUX_NAMESPACE`.
 
@@ -86,23 +81,16 @@ All configuration is via environment variables:
 | `CONFIGHUB_CHANNEL` | yes | The Channel argobot claims and polls, as `<space>/<slug>` or a UUID |
 | `CONFIGHUB_TARGET` | no | The Target that represents the cluster, as `<space>/<slug>` or a UUID. When set, argobot stores facts about the cluster on it at startup; see [Cluster facts](#cluster-facts). Needs Edit on the Target. |
 | `CONFIGHUB_ASSERTION_AUDIENCE` | no | Only for a ConfigHub server that sets `CONFIGHUB_ASSERTION_AUDIENCE` to something other than its default; must match it. |
-| `GITOPS_CONTROLLER` | no | `argocd` (default), `sveltos` or `flux`. See [Sveltos](#sveltos) and [Flux](#flux). Every `ARGO_*`/`ARGOCD_*` variable below applies to `argocd` only. |
+| `GITOPS_CONTROLLER` | no | `argocd` (default), `sveltos` or `flux`. See [Sveltos](#sveltos) and [Flux](#flux). Every `ARGO_*` variable below applies to `argocd` only. |
 | `FLUX_NAMESPACE` | no | _flux only._ Namespace of the OCIRepository named after a Space, tried when listing OCIRepositories fails. Defaults to `flux-system`. |
-| `ARGO_SYNC_MODE` | no | `kubernetes` (default) or `argocd`. See [Sync modes](#sync-modes). |
-| `ARGO_NAMESPACE` | no | _kubernetes mode._ Namespace holding the Argo CD Application resources. Defaults to `argocd`. |
-| `ARGO_REFRESH_TYPE` | no | _kubernetes mode._ `hard` (default) or `normal`. |
-| `ARGOCD_SERVER` | argocd mode | Argo CD API base URL, e.g. `https://argocd.example.com` |
-| `ARGOCD_AUTH_TOKEN` | argocd mode | Argo CD API bearer token |
-| `ARGOCD_INSECURE` | no | _argocd mode._ `true` to skip TLS verification (self-signed Argo CD) |
+| `ARGO_NAMESPACE` | no | Namespace holding the Argo CD Application resources. Defaults to `argocd`. |
+| `ARGO_REFRESH_TYPE` | no | `hard` (default) or `normal`. |
 | `ARGO_APP` | no | The single Argo CD Application every matching event syncs. If unset, the event's Space slug resolves to every Application whose OCI source names that Space, plus the one named after it. |
-| `ARGO_APP_NAMESPACE` | no | _argocd mode._ Argo CD Application namespace passed to the REST sync request (apps-in-any-namespace). |
-| `ARGO_PRUNE` | no | _argocd mode._ `true` to prune on sync. |
-| `ARGO_FORCE` | no | _argocd mode._ `true` to use Argo's force strategy on sync. |
 | `CONFIGHUB_REPORT_LIVE_STATUS` | no | `false` to disable live-status reporting. On by default; see [Live-status reporting](#live-status-reporting). Needs Kubernetes access. |
 
-When `GITOPS_CONTROLLER` is unset, argobot drives Argo CD. When `ARGO_SYNC_MODE` is unset, argobot runs in `kubernetes` mode and needs no Argo CD credentials; it uses the in-cluster ServiceAccount (or a local kubeconfig when run out of cluster). Set `ARGO_SYNC_MODE=argocd` to use the REST API instead, which then requires `ARGOCD_SERVER` and `ARGOCD_AUTH_TOKEN`.
+When `GITOPS_CONTROLLER` is unset, argobot drives Argo CD. It needs no Argo CD credentials: it uses the in-cluster ServiceAccount (or a local kubeconfig when run out of cluster).
 
-Which events argobot receives is not configured here. It is the Channel's `Subscriptions`, set with `cub channel create --subscriptions` or `cub channel update`. The variables an earlier argobot read as a worker (`CONFIGHUB_WORKER_ID`, `CONFIGHUB_WORKER_SECRET`, and the subscription scope `CONFIGHUB_SUBSCRIPTION_NAME`, `CONFIGHUB_EVENT_SPACE_ID`, `CONFIGHUB_EVENT_TARGET_ID`) are ignored with a warning.
+Which events argobot receives is not configured here. It is the Channel's `Subscriptions`, set with `cub channel create --subscriptions` or `cub channel update`. The variables an earlier argobot read as a worker (`CONFIGHUB_WORKER_ID`, `CONFIGHUB_WORKER_SECRET`, and the subscription scope `CONFIGHUB_SUBSCRIPTION_NAME`, `CONFIGHUB_EVENT_SPACE_ID`, `CONFIGHUB_EVENT_TARGET_ID`) are ignored with a warning, as are those of the retired Argo CD REST sync mode (`ARGO_SYNC_MODE`, `ARGOCD_SERVER`, `ARGOCD_AUTH_TOKEN`, `ARGOCD_INSECURE`, `ARGO_APP_NAMESPACE`, `ARGO_PRUNE`, `ARGO_FORCE`). argobot now always syncs through the Kubernetes API, which deploys only when the Application has auto-sync enabled.
 
 ## Setup
 
@@ -132,7 +120,7 @@ argobot --print-subscriptions | cub channel create argobot --space my-cluster \
 
 A Channel created this way subscribes to deploys on every Space and Target. To react only to one cluster's deploys, scope the subscription to its Target with `cub channel update argobot --space my-cluster --subscriptions -`, giving the same JSON with a `TargetID`.
 
-Then run argobot with the key, naming the Channel and the cluster's Target. In the default `kubernetes` mode it uses the ambient Kubernetes credentials (in-cluster ServiceAccount, or your local kubeconfig) — no Argo CD token:
+Then run argobot with the key, naming the Channel and the cluster's Target. It uses the ambient Kubernetes credentials (in-cluster ServiceAccount, or your local kubeconfig) — no Argo CD token:
 
 ```sh
 CONFIGHUB_URL=https://hub.confighub.com \
@@ -144,26 +132,13 @@ ARGO_APP=my-app \
 argobot
 ```
 
-To use the Argo CD REST API instead (deploys regardless of auto-sync), set `ARGO_SYNC_MODE=argocd` and supply its credentials:
-
-```sh
-CONFIGHUB_URL=https://hub.confighub.com \
-CONFIGHUB_AUTH_PRIVATE_KEY="$(cat ~/.confighub/keys/argobot-my-cluster.jwk)" \
-CONFIGHUB_CHANNEL=my-cluster/argobot \
-CONFIGHUB_TARGET=my-cluster/target \
-ARGO_SYNC_MODE=argocd \
-ARGOCD_SERVER=https://argocd.example.com ARGOCD_AUTH_TOKEN=... \
-ARGO_APP=my-app \
-argobot
-```
-
 A `cub unit apply` or a `cub release publish` for a (Space, Target) the Channel subscribes to now emits an event that argobot receives and syncs on. `cub channel get argobot --space my-cluster` shows whether argobot holds the lease and when it last polled.
 
 (Exact `cub` flags may vary by CLI version; `cub --help`.)
 
 ## Deploy
 
-argobot runs in the cluster alongside Argo CD. `manifests/argobot.yaml` is a complete, self-documenting deployment: a Namespace, a ServiceAccount, its RBAC (see below), and a Deployment whose `env` list carries **every** supported variable — defaults filled in, and the ones that must be absent by default commented out. The Deployment reads its credentials from a Secret named `argobot-secrets` via `secretKeyRef`; that Secret is intentionally **not** part of the manifest — supply it out of band (secret store / External Secrets, or `kubectl create secret generic argobot-secrets --from-literal=...`) so the manifest never ships or overwrites credential material. Expected keys: `CONFIGHUB_AUTH_PRIVATE_KEY` (the private JWK) and (argocd mode only) `ARGOCD_AUTH_TOKEN`.
+argobot runs in the cluster alongside Argo CD. `manifests/argobot.yaml` is a complete, self-documenting deployment: a Namespace, a ServiceAccount, its RBAC (see below), and a Deployment whose `env` list carries **every** supported variable — defaults filled in, and the ones that must be absent by default commented out. The Deployment reads its credentials from a Secret named `argobot-secrets` via `secretKeyRef`; that Secret is intentionally **not** part of the manifest — supply it out of band (secret store / External Secrets, or `kubectl create secret generic argobot-secrets --from-literal=...`) so the manifest never ships or overwrites credential material. Its only key is `CONFIGHUB_AUTH_PRIVATE_KEY` (the private JWK).
 
 RBAC comes in two parts. A **`Role`/`RoleBinding` in the Argo CD namespace** (`argocd` by default) grants read+write there — argobot patches an Application's refresh annotation to force a sync, and may manage other Argo CD resources; being namespaced, it grants nothing outside `argocd`. A **`ClusterRole`/`ClusterRoleBinding`** grants cluster-wide **read-only** (`get`/`list`/`watch`) for health/status reporting across all namespaces — deliberately **excluding Secrets** (the core API group is enumerated without `secrets`; other groups are wildcarded, and Secrets exist only in core). Add a CRD's API group to that second rule to extend coverage. The Namespace, ServiceAccount, and Deployment are argobot's own — adjust the namespaces to match your cluster.
 

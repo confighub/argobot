@@ -4,6 +4,8 @@
 package main
 
 import (
+	"bytes"
+	"log"
 	"strings"
 	"testing"
 )
@@ -18,13 +20,14 @@ func setBaseEnv(t *testing.T) {
 	for _, k := range []string{
 		"GITOPS_CONTROLLER", "ARGO_SYNC_MODE", "ARGOCD_SERVER", "ARGOCD_AUTH_TOKEN",
 		"ARGO_NAMESPACE", "ARGO_REFRESH_TYPE", "ARGO_APP", "FLUX_NAMESPACE",
+		"ARGOCD_INSECURE", "ARGO_APP_NAMESPACE", "ARGO_PRUNE", "ARGO_FORCE",
 	} {
 		t.Setenv(k, "")
 	}
 }
 
 func TestLoadConfigModes(t *testing.T) {
-	t.Run("default mode is kubernetes with defaults", func(t *testing.T) {
+	t.Run("default controller is argocd with defaults", func(t *testing.T) {
 		setBaseEnv(t)
 		cfg, err := loadConfig()
 		if err != nil {
@@ -32,9 +35,6 @@ func TestLoadConfigModes(t *testing.T) {
 		}
 		if cfg.Controller != ControllerArgoCD {
 			t.Errorf("Controller = %q, want %q", cfg.Controller, ControllerArgoCD)
-		}
-		if cfg.ArgoSyncMode != SyncModeKubernetes {
-			t.Errorf("ArgoSyncMode = %q, want %q", cfg.ArgoSyncMode, SyncModeKubernetes)
 		}
 		if cfg.ArgoNamespace != "argocd" {
 			t.Errorf("ArgoNamespace = %q, want %q", cfg.ArgoNamespace, "argocd")
@@ -44,25 +44,18 @@ func TestLoadConfigModes(t *testing.T) {
 		}
 	})
 
-	t.Run("kubernetes mode needs no Argo CD credentials", func(t *testing.T) {
-		setBaseEnv(t)
-		t.Setenv("ARGO_SYNC_MODE", "kubernetes")
-		if _, err := loadConfig(); err != nil {
-			t.Fatalf("loadConfig() error = %v", err)
-		}
-	})
-
-	t.Run("argocd mode requires server and token", func(t *testing.T) {
+	t.Run("argocd sync mode is retired and warns", func(t *testing.T) {
 		setBaseEnv(t)
 		t.Setenv("ARGO_SYNC_MODE", "argocd")
-		if _, err := loadConfig(); err == nil {
-			t.Fatal("loadConfig() error = nil, want missing ARGOCD_SERVER/ARGOCD_AUTH_TOKEN")
-		}
-
-		t.Setenv("ARGOCD_SERVER", "https://argocd.example.com")
-		t.Setenv("ARGOCD_AUTH_TOKEN", "token")
+		var logs bytes.Buffer
+		prev := log.Writer()
+		log.SetOutput(&logs)
+		t.Cleanup(func() { log.SetOutput(prev) })
 		if _, err := loadConfig(); err != nil {
-			t.Fatalf("loadConfig() error = %v", err)
+			t.Fatalf("loadConfig() error = %v, want ARGO_SYNC_MODE ignored", err)
+		}
+		if !strings.Contains(logs.String(), "[WARN] ARGO_SYNC_MODE is ignored") {
+			t.Errorf("log = %q, want a warning that ARGO_SYNC_MODE is ignored", logs.String())
 		}
 	})
 
@@ -82,19 +75,11 @@ func TestLoadConfigModes(t *testing.T) {
 		}
 	})
 
-	t.Run("unknown mode is rejected", func(t *testing.T) {
-		setBaseEnv(t)
-		t.Setenv("ARGO_SYNC_MODE", "bogus")
-		if _, err := loadConfig(); err == nil {
-			t.Fatal("loadConfig() error = nil, want invalid mode error")
-		}
-	})
-
 	t.Run("sveltos needs no Argo settings and ignores them", func(t *testing.T) {
 		setBaseEnv(t)
 		t.Setenv("GITOPS_CONTROLLER", "sveltos")
-		// An invalid Argo mode and a pinned Argo app must not affect Sveltos.
-		t.Setenv("ARGO_SYNC_MODE", "bogus")
+		// A pinned Argo app and namespace must not affect Sveltos.
+		t.Setenv("ARGO_NAMESPACE", "argo")
 		t.Setenv("ARGO_APP", "pinned-app")
 		cfg, err := loadConfig()
 		if err != nil {
@@ -103,7 +88,7 @@ func TestLoadConfigModes(t *testing.T) {
 		if cfg.Controller != ControllerSveltos {
 			t.Errorf("Controller = %q, want %q", cfg.Controller, ControllerSveltos)
 		}
-		if cfg.ArgoApp != "" || cfg.ArgoSyncMode != "" || cfg.ArgoNamespace != "" {
+		if cfg.ArgoApp != "" || cfg.ArgoNamespace != "" || cfg.ArgoRefreshType != "" {
 			t.Errorf("Argo settings kept under Sveltos: %+v", cfg)
 		}
 	})
@@ -111,8 +96,8 @@ func TestLoadConfigModes(t *testing.T) {
 	t.Run("flux needs no Argo settings and ignores them", func(t *testing.T) {
 		setBaseEnv(t)
 		t.Setenv("GITOPS_CONTROLLER", "flux")
-		// An invalid Argo mode and a pinned Argo app must not affect Flux.
-		t.Setenv("ARGO_SYNC_MODE", "bogus")
+		// A pinned Argo app and namespace must not affect Flux.
+		t.Setenv("ARGO_NAMESPACE", "argo")
 		t.Setenv("ARGO_APP", "pinned-app")
 		cfg, err := loadConfig()
 		if err != nil {
@@ -121,7 +106,7 @@ func TestLoadConfigModes(t *testing.T) {
 		if cfg.Controller != ControllerFlux {
 			t.Errorf("Controller = %q, want %q", cfg.Controller, ControllerFlux)
 		}
-		if cfg.ArgoApp != "" || cfg.ArgoSyncMode != "" || cfg.ArgoNamespace != "" {
+		if cfg.ArgoApp != "" || cfg.ArgoNamespace != "" || cfg.ArgoRefreshType != "" {
 			t.Errorf("Argo settings kept under Flux: %+v", cfg)
 		}
 		if cfg.FluxNamespace != "flux-system" {
