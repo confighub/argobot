@@ -98,7 +98,7 @@ func main() {
 
 	// Alongside the channel, optionally watch Argo CD Applications and report
 	// their live status back to ConfigHub. It needs Kubernetes access; if the
-	// client cannot be built (e.g. argocd sync mode with no cluster access), skip
+	// client cannot be built (e.g. run out of cluster with no kubeconfig), skip
 	// it with a warning rather than failing the bot.
 	if cfg.ReportLiveStatus {
 		if rep, err := newReporter(cfg, hub); err != nil {

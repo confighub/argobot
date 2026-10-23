@@ -7,7 +7,7 @@
 # live.
 #
 # Every environment variable argobot reads under Sveltos appears in the
-# Deployment's env list below. The ARGO_*/ARGOCD_* variables are Argo CD only and
+# Deployment's env list below. The ARGO_* variables are Argo CD only and
 # are ignored here.
 #
 # The Deployment reads its credentials from a Secret named argobot-secrets via
