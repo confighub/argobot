@@ -3,8 +3,8 @@
 
 name: build
 
-# Development image builds for branches and PRs. Tagged releases (semver image +
-# config bundle) are handled by release.yml, so this workflow does not run on
+# Development image builds for branches and PRs. Tagged releases (semver image)
+# are handled by release.yml, so this workflow does not run on
 # tags and never produces a semver or :latest image.
 on:
   push:

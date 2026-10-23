@@ -15,14 +15,19 @@
 //
 // With --print-subscriptions it prints the Subscriptions its Channel should
 // have, for `cub channel create ... --subscriptions -`.
+//
+// `argobot install --controller argo|flux|sveltos` prints argobot's Kubernetes
+// deployment for that controller, for `kubectl apply -f -`.
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -32,6 +37,16 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "install" {
+		if err := runInstall(os.Args[2:], os.Stdout); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
+			log.Fatalf("[FATAL] %v", err)
+		}
+		return
+	}
+
 	printSubscriptions := flag.Bool("print-subscriptions", false, "print the Channel subscriptions argobot expects and exit")
 	flag.Parse()
 	if *printSubscriptions {
