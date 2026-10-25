@@ -3,8 +3,8 @@ module github.com/confighub/argobot
 go 1.25.0
 
 require (
-	github.com/confighub/sdk/core v0.8.31
-	github.com/confighub/sdk/k8sutil v0.8.31
+	github.com/confighub/sdk/core v0.9.4
+	github.com/confighub/sdk/k8sutil v0.9.4
 	github.com/google/uuid v1.6.0
 	golang.org/x/sync v0.21.0
 	k8s.io/apimachinery v0.35.1
