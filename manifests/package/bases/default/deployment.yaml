@@ -1,0 +1,63 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+#
+# The controller component sets GITOPS_CONTROLLER and the variables that
+# controller reads. The installer sets CONFIGHUB_URL, CONFIGHUB_CHANNEL and
+# CONFIGHUB_TARGET from its inputs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argobot
+  namespace: confighubplaceholder
+  labels:
+    app: argobot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: argobot
+  template:
+    metadata:
+      labels:
+        app: argobot
+    spec:
+      serviceAccountName: argobot
+      # Meets the Pod Security Standards "restricted" level. The image runs as
+      # 1000:3000.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 3000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: argobot
+          image: ghcr.io/confighub/argobot:v0.2.3
+          env:
+            - name: CONFIGHUB_URL
+              value: confighubplaceholder
+            # The service account key argobot authenticates with: a private
+            # JWK, from the Secret the base's secretGenerator makes.
+            - name: CONFIGHUB_AUTH_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: argobot-secrets
+                  key: CONFIGHUB_AUTH_PRIVATE_KEY
+            # The Channel argobot claims, as <space>/<slug>. Which events it
+            # delivers is the Channel's Subscriptions, set with cub.
+            - name: CONFIGHUB_CHANNEL
+              value: confighubplaceholder
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]

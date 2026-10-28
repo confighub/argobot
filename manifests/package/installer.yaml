@@ -1,0 +1,136 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+apiVersion: installer.confighub.com/v1alpha1
+kind: Package
+metadata:
+  name: argobot
+installerMetadata:
+  # The argobot release the package runs; release.yml sets it.
+  version: 0.2.3
+  # componentGroups and vet-pod-security-standard.
+  installerVersion: ">= 0.2.0"
+spec:
+  bases:
+    - name: default
+      path: bases/default
+      default: true
+      description: |
+        What argobot needs under every GitOps controller: its Namespace,
+        ServiceAccount, cluster-wide read-only access, the argobot-secrets
+        Secret holding its service account key, and the Deployment. The
+        controller group adds what one GitOps controller needs.
+
+  components:
+    - name: argocd
+      path: components/argocd
+      default: true
+      description: |
+        Drive Argo CD: patch an Application's refresh annotation to force a
+        sync, and report each Application's status to the Release it runs.
+        Grants argobot access to the argocd namespace.
+    - name: flux
+      path: components/flux
+      description: |
+        Drive Flux 2.6 or later: request a reconciliation of the OCIRepository
+        that pulls a Space, and report status from the Kustomizations that
+        apply it.
+    - name: sveltos
+      path: components/sveltos
+      description: |
+        Drive Sveltos, on its management cluster: redeploy the profile that
+        deploys a Space, and report status from HealthCheckReports, which the
+        HealthCheck and ClusterHealthCheck this component adds produce.
+
+  componentGroups:
+    - name: controller
+      description: The GitOps controller argobot drives.
+      components: [argocd, flux, sveltos]
+      required: true
+
+  collector:
+    command: collector/collect.sh
+    description: |
+      Writes the private_key_file input's key, or else one it issues for the
+      service_account input with cub (once per work-dir), where the
+      argobot-secrets secretGenerator reads it. Reports the ConfigHub URL
+      argobot connects to: the confighub_url input, or the cub context's
+      server.
+
+  inputs:
+    - name: service_account
+      type: string
+      required: true
+      prompt: ConfigHub service account argobot runs as
+      description: |
+        The service account argobot authenticates as. It needs Claim on the
+        Channel, and View, ViewChildren and EditChildren on the Target its
+        deployment Spaces release to (Edit too, to store cluster facts).
+    - name: channel
+      type: string
+      required: true
+      prompt: Channel argobot listens on, as <space>/<slug>
+      description: |
+        The ConfigHub Channel argobot claims, subscribed to release.published.
+        Create it with `cub channel create`.
+    - name: target
+      type: string
+      default: ""
+      prompt: Target that represents this cluster, as <space>/<slug> (optional)
+      description: |
+        When set, argobot stores facts about the cluster on this Target at
+        startup. Needs Edit on the Target.
+    - name: private_key_file
+      type: string
+      default: ""
+      prompt: Private key argobot authenticates with, as an absolute path (optional)
+      description: |
+        A private JWK the service account already has registered, such as
+        one `cub serviceaccount key add --generate` wrote. Empty issues a key
+        for the service account, once per work-dir.
+    - name: confighub_url
+      type: string
+      default: ""
+      prompt: ConfigHub URL as the cluster reaches it (optional)
+      description: |
+        The ConfigHub server argobot connects to. Empty is the server of the
+        cub context in effect, which a cluster can't reach when it is
+        localhost.
+
+  transformers:
+    # The base's resources are in confighubplaceholder. Naming it as the old
+    # namespace leaves resources in any other namespace where they are: the
+    # argocd component's Role and RoleBinding. The sveltos component's
+    # HealthCheck and ClusterHealthCheck are cluster-scoped, which SDK releases
+    # before v0.9.10 don't know.
+    - toolchain: Kubernetes/YAML
+      description: Put argobot in the install namespace.
+      invocations:
+        - name: set-namespace
+          args:
+            - "{{ .Namespace }}"
+            - confighubplaceholder
+            - lib.projectsveltos.io/v1beta1/HealthCheck,lib.projectsveltos.io/v1beta1/ClusterHealthCheck
+    - toolchain: Kubernetes/YAML
+      whereResource: "ConfigHub.ResourceType = 'apps/v1/Deployment'"
+      description: Connect argobot to ConfigHub. An empty target removes CONFIGHUB_TARGET.
+      invocations:
+        - name: set-env
+          args:
+            - argobot
+            - "CONFIGHUB_URL={{ .Facts.configHubURL }}"
+            - "CONFIGHUB_CHANNEL={{ .Inputs.channel }}"
+            - "CONFIGHUB_TARGET={{ .Inputs.target }}"
+
+  validators:
+    - toolchain: Kubernetes/YAML
+      invocations:
+        - name: vet-schemas
+        - name: vet-merge-keys
+        - name: vet-format
+        # A tag must be pinned: no :latest, and no untagged image, which means
+        # latest. A colon counts as a tag only in the last path segment, so a
+        # registry port is not one.
+        - name: vet-images
+          args: ['{"DenyRegexp": "(:latest$)|^([^/]+/)*[^/:@]+$"}']
+        - name: vet-pod-security-standard
+          args: [restricted]

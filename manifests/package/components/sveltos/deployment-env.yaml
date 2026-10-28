@@ -1,0 +1,15 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argobot
+  namespace: confighubplaceholder
+spec:
+  template:
+    spec:
+      containers:
+        - name: argobot
+          env:
+            - name: GITOPS_CONTROLLER
+              value: sveltos

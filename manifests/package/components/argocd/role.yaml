@@ -1,0 +1,30 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+#
+# argobot patches an Application's refresh annotation to force a sync, and it
+# may manage other Argo CD resources in Argo CD's namespace, so it gets read and
+# write across that namespace. This is a namespaced Role, so it grants nothing
+# outside argocd. The namespace must be ARGO_NAMESPACE's.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argobot-argocd
+  namespace: argocd
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argobot-argocd
+  namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argobot-argocd
+subjects:
+  - kind: ServiceAccount
+    name: argobot
+    namespace: confighubplaceholder

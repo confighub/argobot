@@ -1,0 +1,20 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - clusterrole.yaml
+  - healthcheck.yaml
+patches:
+  - path: deployment-env.yaml
+  # Read ClusterSummaries and HealthCheckReports, for live status.
+  - target:
+      kind: ClusterRole
+      name: argobot-read
+    patch: |-
+      - op: add
+        path: /rules/1/apiGroups/-
+        value: config.projectsveltos.io
+      - op: add
+        path: /rules/1/apiGroups/-
+        value: lib.projectsveltos.io

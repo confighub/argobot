@@ -1,0 +1,28 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Forcing a sync: argobot patches the reconcile.fluxcd.io/requestedAt annotation
+# on the OCIRepository that pulls a Space. OCIRepositories aren't confined to one
+# namespace, so this is a ClusterRole; it grants nothing beyond reading and
+# patching them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argobot-flux
+rules:
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["ocirepositories"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argobot-flux
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argobot-flux
+subjects:
+  - kind: ServiceAccount
+    name: argobot
+    namespace: confighubplaceholder

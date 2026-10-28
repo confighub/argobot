@@ -149,7 +149,7 @@ For Sveltos, deploy `manifests/sveltos/argobot.yaml` instead; see [Sveltos](#sve
 The three manifests are built into the binary. `argobot install` prints the one for a controller, with the image pinned to the argobot version that printed it (a development build pins `latest`), for `kubectl apply` or for loading into ConfigHub:
 
 ```sh
-docker run --rm ghcr.io/confighub/argobot:v0.3.0 install --controller flux | kubectl apply -f -
+docker run --rm ghcr.io/confighub/argobot:v0.2.3 install --controller flux | kubectl apply -f -
 ```
 
 | Flag | Default | Description |
@@ -159,6 +159,10 @@ docker run --rm ghcr.io/confighub/argobot:v0.3.0 install --controller flux | kub
 | `--tag` | the binary's version | The image tag the Deployment runs. |
 
 This replaces the config bundle that `release.yml` used to publish to `ghcr.io/confighub/configs/argobot`, which carried only the Argo CD manifest. The Secret is still not part of the output.
+
+### Installer package
+
+`manifests/package` is an [installer](https://github.com/confighub/installer) package for argobot, published as `oci://ghcr.io/confighub/packages/argobot`. It is a common base plus one component per controller, `argocd` by default. Its collector issues the service account's key and renders the `argobot-secrets` Secret, which you apply to the cluster yourself. The Deployment runs a pinned image tag, never `latest`. See [its README](manifests/package/README.md).
 
 ## Upgrading from 0.1
 
@@ -205,6 +209,7 @@ docker build -t ghcr.io/confighub/argobot:dev .
 Two workflows, two cadences:
 
 - `.github/workflows/build.yml` builds and pushes **development** images to `ghcr.io/confighub/argobot` on pushes to `main` and on PRs (tags `main`, `pr-N`, `sha-…`). No semver, no `:latest`.
-- `.github/workflows/release.yml` cuts a **release** when you push a `vX.Y.Z` git tag: it builds the semver image (`:vX.Y.Z`, plus `:latest`) with the tag stamped in as the binary's version, so `argobot install` in that image pins the Deployment to that image. A manifest change ships with the next release.
+- `.github/workflows/release.yml` cuts a **release** when you push a `vX.Y.Z` git tag: it builds the semver image (`:vX.Y.Z`, plus `:latest`) with the tag stamped in as the binary's version, so `argobot install` in that image pins the Deployment to that image. A manifest change ships with the next release. It then opens a pull request that pins the installer package to the new image.
+- `.github/workflows/package.yml` tests the **installer package** in `manifests/package` with `scripts/test-package.sh`, which you can run locally, and publishes it to `oci://ghcr.io/confighub/packages/argobot:<installerMetadata.version>`, signed. The package's version is the argobot release it runs, so it publishes when `release.yml`'s pull request pinning the package to a release merges; a change to the package alone ships with the next release.
 
 Every image carries its third-party notices at `/app/THIRD_PARTY_LICENSES.txt` (Go modules linked into the binary) and `/app/OS_LICENSE_NOTICE.txt` (Alpine base packages, with the GPL source offer), and every published manifest has an SPDX SBOM attestation (`docker buildx imagetools inspect ghcr.io/confighub/argobot:<tag> --format '{{json .SBOM}}'`). After changing dependencies, run `./scripts/gen-third-party-licenses.sh` and commit the result; `.github/workflows/third-party-licenses.yml` fails the PR if the committed file is stale or a copyleft dependency is linked in.

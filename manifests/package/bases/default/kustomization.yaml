@@ -1,0 +1,25 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - clusterrole-read.yaml
+  - deployment.yaml
+# The collector writes the service account's private key to this file. It is
+# never bundled or committed, and the Secret it becomes is rendered to
+# out/secrets/, which installer upload leaves out: apply it to the cluster
+# yourself. The name is fixed because the Deployment names it.
+secretGenerator:
+  - name: argobot-secrets
+    namespace: confighubplaceholder
+    files:
+      - CONFIGHUB_AUTH_PRIVATE_KEY=argobot-private-key.env.secret
+    options:
+      disableNameSuffixHash: true
+# Override with installer setup --set-image ghcr.io/confighub/argobot=<image>.
+images:
+  - name: ghcr.io/confighub/argobot
+    newName: ghcr.io/confighub/argobot
+    newTag: v0.2.3
