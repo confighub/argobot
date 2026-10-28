@@ -4,8 +4,8 @@
 #
 # Pins the installer package in manifests/package to an argobot release: the
 # image tag in the base's kustomize images block and its Deployment, and the
-# next patch version of the package. Does nothing when the package already runs
-# that release. release.yml runs it for each release.
+# package's version, which is the release's without the "v". Does nothing when
+# the package already runs that release. release.yml runs it for each release.
 #
 # Needs yq, diff and patch.
 #
@@ -18,7 +18,7 @@ tag="${1:-}"
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 pkg="${repo}/manifests/package"
-export IMAGE=ghcr.io/confighub/argobot TAG="$tag"
+export IMAGE=ghcr.io/confighub/argobot TAG="$tag" VERSION="${tag#v}"
 
 # yq_edit <file> <expression>: applies a yq expression in place, keeping the
 # file's blank lines, which yq drops: only yq's other changes are patched in.
@@ -38,7 +38,6 @@ fi
 yq_edit "$kustomization" '(.images[] | select(.name == strenv(IMAGE))).newTag = strenv(TAG)'
 yq_edit "${pkg}/bases/default/deployment.yaml" \
   '(.spec.template.spec.containers[] | select(.name == "argobot")).image = strenv(IMAGE) + ":" + strenv(TAG)'
-yq_edit "${pkg}/installer.yaml" \
-  '.installerMetadata.version |= (split(".") | .[2] = ((.[2] | tonumber) + 1 | tostring) | join("."))'
+yq_edit "${pkg}/installer.yaml" '.installerMetadata.version = strenv(VERSION)'
 
 echo "Pinned the package to ${IMAGE}:${tag}, as version $(yq -r .installerMetadata.version "${pkg}/installer.yaml")."

@@ -3,10 +3,11 @@
 
 name: package
 
-# Publishes argobot's installer package (manifests/package) as
+# Tests argobot's installer package (manifests/package) and publishes it as
 # oci://ghcr.io/confighub/packages/argobot:<installerMetadata.version>, signed
-# keylessly. A version is immutable: a change to the package that leaves the
-# version where it is fails, here and on the pull request that makes it.
+# keylessly. The package's version is the argobot release it runs, so each
+# version is published once, when release.yml's pull request pinning the
+# package to that release merges.
 on:
   push:
     branches: [main]
@@ -67,28 +68,22 @@ jobs:
           installer package "$PACKAGE_DIR" -o "${RUNNER_TEMP}/argobot.tgz" | tee "${RUNNER_TEMP}/package.out"
           echo "digest=$(awk '/digest:/ {print $2}' "${RUNNER_TEMP}/package.out")" >> "$GITHUB_OUTPUT"
 
-      # Packaging is deterministic, so a published version repackages to the
-      # same digest exactly when its contents are unchanged.
-      - name: Compare with the published version
+      # A version is published once. A change to the package after its version
+      # is published ships with the next argobot release, which release.yml
+      # pins the package to.
+      - name: Check whether the version is published
         id: published
         env:
           VERSION: ${{ steps.package.outputs.version }}
-          DIGEST: ${{ steps.package.outputs.digest }}
         run: |
           set -euo pipefail
-          if ! installer list "oci://${PACKAGE_REPO}" 2>/dev/null | grep -qx "$VERSION"; then
-            echo "Version ${VERSION} is not published yet."
+          if installer list "oci://${PACKAGE_REPO}" 2>/dev/null | grep -qx "$VERSION"; then
+            echo "::notice::Package ${VERSION} is already published; changes to it ship with the next argobot release."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Package ${VERSION} is not published yet."
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            exit 0
           fi
-          installer pull "oci://${PACKAGE_REPO}:${VERSION}" --work-dir "${RUNNER_TEMP}/published"
-          published=$(installer package "${RUNNER_TEMP}/published/package" -o "${RUNNER_TEMP}/published.tgz" | awk '/digest:/ {print $2}')
-          if [ "$published" != "$DIGEST" ]; then
-            echo "::error file=${PACKAGE_DIR}/installer.yaml::Version ${VERSION} is already published with other contents. Bump installerMetadata.version."
-            exit 1
-          fi
-          echo "Version ${VERSION} is published with these contents."
-          echo "exists=true" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
         if: github.event_name != 'pull_request' && steps.published.outputs.exists == 'false'

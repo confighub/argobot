@@ -119,8 +119,8 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git switch -c "$branch"
-          git commit -am "Run argobot ${TAG} in installer package ${next}"
+          git commit -am "Pin the installer package to argobot ${TAG}"
           git push -f origin "$branch"
           gh pr create --base main --head "$branch" \
-            --title "Run argobot ${TAG} in installer package ${next}" \
-            --body "Pins the installer package's image to \`${IMAGE}:${TAG}\`, which the ${TAG} release just pushed, and bumps the package to ${next}. Merging publishes it."
+            --title "Pin the installer package to argobot ${TAG}" \
+            --body "Pins the installer package's image to \`${IMAGE}:${TAG}\`, which the ${TAG} release just pushed, as package version ${next}. Merging publishes it."

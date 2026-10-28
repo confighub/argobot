@@ -38,6 +38,11 @@ fail() {
   failures=$((failures + 1))
 }
 
+# The package's version is the argobot release it runs.
+version="$(yq -r .installerMetadata.version "${pkg}/installer.yaml")"
+tag="$(yq -r '.images[] | select(.name == "ghcr.io/confighub/argobot") | .newTag' "${pkg}/bases/default/kustomization.yaml")"
+[ "v${version}" = "$tag" ] || fail "installerMetadata.version is ${version}, but the package runs argobot ${tag}"
+
 render() {
   local name=$1
   shift

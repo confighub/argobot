@@ -29,7 +29,7 @@ argobot needs the following before installing it, set up as under [Setup](../../
 It needs installer 0.2.0 or later. Unless you pass `private_key_file`, the installer's collector issues the service account's key with `cub`, so `cub` must be signed in to the organization that holds them.
 
 ```sh
-installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.1.0 \
+installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.2.3 \
   --work-dir argobot-my-cluster --namespace argobot \
   --input service_account=argobot-my-cluster \
   --input channel=my-cluster/argobot \
@@ -65,6 +65,4 @@ To run another image, such as a mirror's copy, pass `--set-image ghcr.io/configh
 
 ## Publishing
 
-`.github/workflows/package.yml` publishes the package when a change to it reaches `main`. It publishes to the version in `installerMetadata.version`, so bump that version with every change. A pull request that changes a published version's contents fails.
-
-Each argobot release opens a pull request that pins the package to the new image and bumps the package's patch version (`release.yml`). Merging that pull request publishes the package.
+The package's version is the argobot release it runs: package 0.2.3 runs argobot v0.2.3. Each argobot release opens a pull request that pins the package to the new image and version (`scripts/pin-package-image.sh`, run by `release.yml`), and merging it publishes the package (`package.yml`). A version is published once, so a change to the package alone ships with the next argobot release; tag one to ship it sooner.
