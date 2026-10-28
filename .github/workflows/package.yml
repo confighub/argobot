@@ -28,9 +28,7 @@ permissions:
 env:
   PACKAGE_DIR: manifests/package
   PACKAGE_REPO: ghcr.io/confighub/packages/argobot
-  # Packaging, pushing and signing don't render, so they don't need the
-  # installer an operator installs with to be this one.
-  INSTALLER_VERSION: v0.1.0
+  INSTALLER_VERSION: v0.2.0
 
 jobs:
   package:
