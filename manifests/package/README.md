@@ -34,9 +34,15 @@ installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.1.0 \
   --input service_account=argobot-my-cluster \
   --input channel=my-cluster/argobot \
   --input target=my-cluster/target
-# The key never goes to ConfigHub: apply its Secret to the cluster yourself.
-kubectl apply -f argobot-my-cluster/out/secrets/
-installer upload --work-dir argobot-my-cluster
+# The key never goes to ConfigHub: apply its Secret to the cluster yourself,
+# with the Namespace it goes in.
+kubectl apply -f argobot-my-cluster/out/manifests/namespace-argobot.yaml \
+  -f argobot-my-cluster/out/secrets/
+installer upload --work-dir argobot-my-cluster --space argobot-base
+# Deploy it to the cluster. On a cluster `cub cluster up` or `cub cluster
+# attach` set up, this also adds argobot's Argo CD Application.
+cub variant create --target my-cluster/target my-cluster argobot-base
+cub release publish argobot-my-cluster
 ```
 
 Add `--select flux` or `--select sveltos` for those controllers.
