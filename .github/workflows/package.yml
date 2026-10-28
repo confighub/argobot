@@ -12,10 +12,12 @@ on:
     branches: [main]
     paths:
       - manifests/package/**
+      - scripts/test-package.sh
       - .github/workflows/package.yml
   pull_request:
     paths:
       - manifests/package/**
+      - scripts/test-package.sh
       - .github/workflows/package.yml
   workflow_dispatch: {}
 
@@ -47,23 +49,11 @@ jobs:
           install -m 0755 installer-linux-amd64 /usr/local/bin/installer
           rm installer-linux-amd64 installer-linux-amd64.sha256
 
-      # The installer runs kustomize over the base and the selected component.
-      # A placeholder stands in for the key the collector writes at install
-      # time.
-      - name: Build each controller's kustomization
-        run: |
-          set -euo pipefail
-          echo '{}' > "${PACKAGE_DIR}/bases/default/argobot-private-key.env.secret"
-          for component in argocd flux sveltos; do
-            dir="${PACKAGE_DIR}/.build-${component}"
-            mkdir -p "$dir"
-            printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [../bases/default]\ncomponents: [../components/%s]\n' \
-              "$component" > "${dir}/kustomization.yaml"
-            kustomize build "$dir" > /dev/null
-            echo "built ${component}"
-            rm -r "$dir"
-          done
-          rm "${PACKAGE_DIR}/bases/default/argobot-private-key.env.secret"
+      # Renders the package for each controller and preset with this
+      # installer, running its validators, and checks the renders it refuses.
+      # Run it locally the same way.
+      - name: Test the package
+        run: scripts/test-package.sh
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | installer login ghcr.io --username "${{ github.actor }}" --password-stdin

@@ -26,7 +26,7 @@ argobot needs the following before installing it, set up as under [Setup](../../
 - its grants on the cluster's Target
 - a Channel that the service account can claim
 
-It needs installer 0.2.0 or later. The installer's collector issues the service account's key with `cub`, so `cub` must be signed in to the organization that holds them.
+It needs installer 0.2.0 or later. Unless you pass `private_key_file`, the installer's collector issues the service account's key with `cub`, so `cub` must be signed in to the organization that holds them.
 
 ```sh
 installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.1.0 \
@@ -46,11 +46,16 @@ Add `--select flux` or `--select sveltos` for those controllers.
 | `service_account` | required | The service account argobot authenticates as. |
 | `channel` | required | The Channel argobot claims, as `<space>/<slug>`. |
 | `target` | none | The Target that stands for the cluster, as `<space>/<slug>`. When set, argobot stores the cluster's facts on it. |
+| `private_key_file` | none | A private JWK the service account already has registered, as an absolute path, such as the one `cub serviceaccount key add --generate` writes. Without it, the collector issues a key. |
 | `confighub_url` | the cub context's server | The ConfigHub URL as the cluster reaches it. |
 
-The collector issues one key per work-dir and keeps it in `out/secrets/argobot-private-key.jwk`, so later setups, including upgrades with `setup --pull`, reuse it. `setup --clean` removes it, and the next setup issues a new key. Delete the old one with `cub serviceaccount key delete`.
+Without `private_key_file`, the collector issues one key per work-dir and keeps it in `out/secrets/argobot-private-key.jwk`, so later setups, including upgrades with `setup --pull`, reuse it. `setup --clean` removes it, and the next setup issues a new key. Delete the old one with `cub serviceaccount key delete`.
 
 To run another image, such as a mirror's copy, pass `--set-image ghcr.io/confighub/argobot=<registry>/argobot:<tag>`.
+
+## Testing
+
+`scripts/test-package.sh` renders the package for each controller and preset with `installer setup`, running its validators, and checks the renders it has to refuse. It needs installer 0.2.0 or later (or `$INSTALLER`), kustomize and yq, and no ConfigHub server. The `package` workflow runs it on every change.
 
 ## Publishing
 

@@ -49,8 +49,8 @@ spec:
   collector:
     command: collector/collect.sh
     description: |
-      Issues a key for the service_account input with cub, unless an earlier
-      setup in this work-dir already did, and writes it where the
+      Writes the private_key_file input's key, or else one it issues for the
+      service_account input with cub (once per work-dir), where the
       argobot-secrets secretGenerator reads it. Reports the ConfigHub URL
       argobot connects to: the confighub_url input, or the cub context's
       server.
@@ -78,6 +78,14 @@ spec:
       description: |
         When set, argobot stores facts about the cluster on this Target at
         startup. Needs Edit on the Target.
+    - name: private_key_file
+      type: string
+      default: ""
+      prompt: Private key argobot authenticates with, as an absolute path (optional)
+      description: |
+        A private JWK the service account already has registered, such as
+        one `cub serviceaccount key add --generate` wrote. Empty issues a key
+        for the service account, once per work-dir.
     - name: confighub_url
       type: string
       default: ""

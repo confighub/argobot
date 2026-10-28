@@ -108,16 +108,11 @@ jobs:
           PACKAGE_DIR: manifests/package
         run: |
           set -euo pipefail
-          # sed rather than yq, so the files keep their comments and quoting.
-          sed -i "s#^\(    newTag: \).*#\1${TAG}#" "${PACKAGE_DIR}/bases/default/kustomization.yaml"
-          sed -i "s#^\(          image: ${IMAGE}:\).*#\1${TAG}#" "${PACKAGE_DIR}/bases/default/deployment.yaml"
+          scripts/pin-package-image.sh "$TAG"
           if git diff --quiet; then
-            echo "The package already runs ${TAG}."
             exit 0
           fi
-          version=$(yq -r .installerMetadata.version "${PACKAGE_DIR}/installer.yaml")
-          next=$(echo "$version" | awk -F. '{printf "%d.%d.%d", $1, $2, $3 + 1}')
-          sed -i "s#^\(  version: \)${version}\$#\1${next}#" "${PACKAGE_DIR}/installer.yaml"
+          next=$(yq -r .installerMetadata.version "${PACKAGE_DIR}/installer.yaml")
           git diff --stat
 
           branch="package-argobot-${TAG}"
