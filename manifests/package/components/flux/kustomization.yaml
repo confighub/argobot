@@ -1,0 +1,19 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - clusterrole.yaml
+patches:
+  - path: deployment-env.yaml
+  # Read OCIRepositories and Kustomizations, for live status.
+  - target:
+      kind: ClusterRole
+      name: argobot-read
+    patch: |-
+      - op: add
+        path: /rules/1/apiGroups/-
+        value: source.toolkit.fluxcd.io
+      - op: add
+        path: /rules/1/apiGroups/-
+        value: kustomize.toolkit.fluxcd.io

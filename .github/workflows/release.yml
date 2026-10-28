@@ -82,3 +82,50 @@ jobs:
           provenance: mode=max
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Pin the installer package to the image just released, as a pull request:
+  # the package names a tag, never latest, so a release reaches it only
+  # through a change to it. Merging that change publishes the package
+  # (package.yml). Opening the pull request needs "Allow GitHub Actions to
+  # create and approve pull requests" in the repository's Actions settings, and
+  # a pull request opened with GITHUB_TOKEN starts no workflows of its own.
+  package:
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Open a pull request pinning the package to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          PACKAGE_DIR: manifests/package
+        run: |
+          set -euo pipefail
+          # sed rather than yq, so the files keep their comments and quoting.
+          sed -i "s#^\(    newTag: \).*#\1${TAG}#" "${PACKAGE_DIR}/bases/default/kustomization.yaml"
+          sed -i "s#^\(          image: ${IMAGE}:\).*#\1${TAG}#" "${PACKAGE_DIR}/bases/default/deployment.yaml"
+          if git diff --quiet; then
+            echo "The package already runs ${TAG}."
+            exit 0
+          fi
+          version=$(yq -r .installerMetadata.version "${PACKAGE_DIR}/installer.yaml")
+          next=$(echo "$version" | awk -F. '{printf "%d.%d.%d", $1, $2, $3 + 1}')
+          sed -i "s#^\(  version: \)${version}\$#\1${next}#" "${PACKAGE_DIR}/installer.yaml"
+          git diff --stat
+
+          branch="package-argobot-${TAG}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git commit -am "Run argobot ${TAG} in installer package ${next}"
+          git push -f origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "Run argobot ${TAG} in installer package ${next}" \
+            --body "Pins the installer package's image to \`${IMAGE}:${TAG}\`, which the ${TAG} release just pushed, and bumps the package to ${next}. Merging publishes it."

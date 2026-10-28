@@ -1,0 +1,28 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Forcing a redeploy: argobot patches the profile.projectsveltos.io/redeploy
+# annotation on the ClusterProfile (cluster-scoped) or Profile (namespaced) that
+# deploys a Space. Sveltos's profiles aren't confined to one namespace, so this is
+# a ClusterRole; it grants nothing beyond reading and patching profiles.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argobot-sveltos
+rules:
+  - apiGroups: ["config.projectsveltos.io"]
+    resources: ["clusterprofiles", "profiles"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argobot-sveltos
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argobot-sveltos
+subjects:
+  - kind: ServiceAccount
+    name: argobot
+    namespace: confighubplaceholder
