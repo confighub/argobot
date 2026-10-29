@@ -8,16 +8,33 @@ The base holds what argobot needs under every GitOps controller:
 - cluster-wide read-only access, without Secrets
 - the `argobot-secrets` Secret
 - the Deployment, at a pinned image tag
+- argobot's environment, but for its key: the `argobot-env` ConfigMap, generated from `bases/default/argobot.env`
 
 Select one controller component with it:
 
 | Component | Adds |
 |---|---|
-| `argocd` (default) | A Role and RoleBinding in `argocd`, read access to `argoproj.io`, `GITOPS_CONTROLLER=argocd` |
-| `flux` | A ClusterRole to patch OCIRepositories, read access to the Flux source and kustomize groups, `GITOPS_CONTROLLER=flux` |
-| `sveltos` | A ClusterRole to patch profiles, read access to the Sveltos groups, the HealthCheck and ClusterHealthCheck that live status reads, `GITOPS_CONTROLLER=sveltos` |
+| `argocd` (default) | A Role and RoleBinding in `argocd`, read access to `argoproj.io`, its variables, `GITOPS_CONTROLLER=argocd` among them (`argocd.env`) |
+| `flux` | A ClusterRole to patch OCIRepositories, read access to the Flux source and kustomize groups, its variables, `GITOPS_CONTROLLER=flux` among them (`flux.env`) |
+| `sveltos` | A ClusterRole to patch profiles, read access to the Sveltos groups, the HealthCheck and ClusterHealthCheck that live status reads, its variables, `GITOPS_CONTROLLER=sveltos` among them (`sveltos.env`) |
 
-They form the required `controller` group: selecting two fails, and selecting none installs `argocd`. A render fails validation if the image is `:latest` or untagged, or if the pod doesn't meet the Pod Security Standards restricted level.
+They form the required `controller` group: selecting two fails, and selecting none installs `argocd`. A render fails validation if:
+- the image is `:latest` or untagged
+- the pod doesn't meet the Pod Security Standards restricted level
+- argobot's environment has a variable argobot doesn't read, or a value it doesn't accept, by the schema in `validation/env.schema.json`
+
+### argobot's environment
+
+`argobot-env` is an AppConfig/Env file carried in a ConfigMap: each component's `.env` file merges into the base's. `installer upload` makes it an AppConfig Unit, which ConfigHub renders into the ConfigMap, so you change argobot's environment by editing that Unit, for example:
+
+```sh
+cub function do --space argobot-my-cluster --unit argobot-env --toolchain AppConfig/Env \
+  set-string-path Argobot ARGO_REFRESH_TYPE normal
+```
+
+The ConfigMap has no name suffix (`disableNameSuffixHash`), so ConfigHub renders it in place under the name the Deployment reads. It also fills in the Deployment's `confighub.com/Hash` annotation with the ConfigMap's hash, so a change rolls the pods.
+
+`validation/env.schema.json` is what `argobot docgen env` prints; `scripts/test-package.sh` fails when it differs.
 
 ## Install
 

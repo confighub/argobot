@@ -4,8 +4,14 @@ apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources:
   - clusterrole.yaml
+# The variables argobot reads to drive Flux, merged into the base's.
+configMapGenerator:
+  - name: argobot-env
+    namespace: confighubplaceholder
+    behavior: merge
+    envs:
+      - flux.env
 patches:
-  - path: deployment-env.yaml
   # Read OCIRepositories and Kustomizations, for live status.
   - target:
       kind: ClusterRole

@@ -1,9 +1,8 @@
 # Copyright (C) ConfigHub, Inc.
 # SPDX-License-Identifier: MIT
 #
-# The controller component sets GITOPS_CONTROLLER and the variables that
-# controller reads. The installer sets CONFIGHUB_URL, CONFIGHUB_CHANNEL and
-# CONFIGHUB_TARGET from its inputs.
+# Its environment is the argobot-env ConfigMap, made from argobot.env and the
+# controller component's env file.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,6 +19,8 @@ spec:
     metadata:
       labels:
         app: argobot
+      annotations:
+        confighub.com/Hash: confighubplaceholder
     spec:
       serviceAccountName: argobot
       # Meets the Pod Security Standards "restricted" level. The image runs as
@@ -34,9 +35,13 @@ spec:
       containers:
         - name: argobot
           image: ghcr.io/confighub/argobot:v0.2.3
+          # argobot-env holds every variable but the key. ConfigHub sets
+          # confighub.com/Hash below to the ConfigMap's content hash, so a
+          # change to it rolls the pods.
+          envFrom:
+            - configMapRef:
+                name: argobot-env
           env:
-            - name: CONFIGHUB_URL
-              value: confighubplaceholder
             # The service account key argobot authenticates with: a private
             # JWK, from the Secret the base's secretGenerator makes.
             - name: CONFIGHUB_AUTH_PRIVATE_KEY
@@ -44,10 +49,6 @@ spec:
                 secretKeyRef:
                   name: argobot-secrets
                   key: CONFIGHUB_AUTH_PRIVATE_KEY
-            # The Channel argobot claims, as <space>/<slug>. Which events it
-            # delivers is the Channel's Subscriptions, set with cub.
-            - name: CONFIGHUB_CHANNEL
-              value: confighubplaceholder
           resources:
             requests:
               cpu: 25m
