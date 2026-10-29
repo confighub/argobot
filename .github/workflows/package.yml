@@ -15,11 +15,17 @@ on:
       - manifests/package/**
       - scripts/test-package.sh
       - .github/workflows/package.yml
+      # The environment the package's schema is generated from.
+      - config.go
+      - docgen.go
   pull_request:
     paths:
       - manifests/package/**
       - scripts/test-package.sh
       - .github/workflows/package.yml
+      # The environment the package's schema is generated from.
+      - config.go
+      - docgen.go
   workflow_dispatch: {}
 
 permissions:
@@ -39,6 +45,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+
+      # test-package.sh compares the package's env schema with docgen env.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
 
       - name: Install the installer
         run: |

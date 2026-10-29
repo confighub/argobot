@@ -96,6 +96,15 @@ spec:
         cub context in effect, which a cluster can't reach when it is
         localhost.
 
+  validation:
+    envSchema: validation/env.schema.json
+    howToRegenerate: |
+      From the root of the argobot repository:
+
+        go run . docgen env > manifests/package/validation/env.schema.json
+
+      scripts/test-package.sh fails when the committed schema differs.
+
   transformers:
     # The base's resources are in confighubplaceholder. Naming it as the old
     # namespace leaves resources in any other namespace where they are: the
@@ -110,16 +119,15 @@ spec:
             - "{{ .Namespace }}"
             - confighubplaceholder
             - lib.projectsveltos.io/v1beta1/HealthCheck,lib.projectsveltos.io/v1beta1/ClusterHealthCheck
-    - toolchain: Kubernetes/YAML
-      whereResource: "ConfigHub.ResourceType = 'apps/v1/Deployment'"
-      description: Connect argobot to ConfigHub. An empty target removes CONFIGHUB_TARGET.
+    - toolchain: AppConfig/Env
+      description: Connect argobot to ConfigHub. An empty target is the same as none.
       invocations:
-        - name: set-env
-          args:
-            - argobot
-            - "CONFIGHUB_URL={{ .Facts.configHubURL }}"
-            - "CONFIGHUB_CHANNEL={{ .Inputs.channel }}"
-            - "CONFIGHUB_TARGET={{ .Inputs.target }}"
+        - name: set-string-path
+          args: [Argobot, CONFIGHUB_URL, "{{ .Facts.configHubURL }}"]
+        - name: set-string-path
+          args: [Argobot, CONFIGHUB_CHANNEL, "{{ .Inputs.channel }}"]
+        - name: set-string-path
+          args: [Argobot, CONFIGHUB_TARGET, "{{ .Inputs.target }}"]
 
   validators:
     - toolchain: Kubernetes/YAML
@@ -134,3 +142,9 @@ spec:
           args: ['{"DenyRegexp": "(:latest$)|^([^/]+/)*[^/:@]+$"}']
         - name: vet-pod-security-standard
           args: [restricted]
+    - toolchain: AppConfig/Env
+      description: argobot's environment has only the variables argobot reads, with values it accepts.
+      invocations:
+        - name: vet-jsonschema
+          args:
+            - '{"Argobot": {{ loadJSON "validation/env.schema.json" }} }'

@@ -4,10 +4,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"strings"
+
+	"github.com/sethvargo/go-envconfig"
 )
 
 // config holds argobot's runtime configuration, all sourced from the environment.
@@ -89,19 +92,43 @@ var retiredEnv = []struct{ name, reason string }{
 	{"ARGO_FORCE", "argobot syncs Argo CD Applications through the Kubernetes API only"},
 }
 
+// envVars is argobot's environment: go-envconfig reads it, and `argobot docgen
+// env` describes it as a JSON Schema, whose property names are the json tags and
+// whose descriptions, defaults and allowed values are the description, default
+// and enum tags. Every variable is a string, as an environment variable is. An
+// empty one is the same as an unset one, so loadConfig applies the defaults
+// rather than go-envconfig, which would keep an empty value.
+type envVars struct {
+	ConfigHubURL      string `env:"CONFIGHUB_URL" json:"CONFIGHUB_URL" description:"Base URL of the ConfigHub API, as argobot reaches it. Required."`
+	PrivateKey        string `env:"CONFIGHUB_AUTH_PRIVATE_KEY" json:"CONFIGHUB_AUTH_PRIVATE_KEY" description:"Private JWK of the ConfigHub service account argobot authenticates as, as cub serviceaccount key add --generate writes it. Required; supply it from a Secret."`
+	AssertionAudience string `env:"CONFIGHUB_ASSERTION_AUDIENCE" json:"CONFIGHUB_ASSERTION_AUDIENCE" description:"Audience of the assertions argobot signs. Set it only for a server whose CONFIGHUB_ASSERTION_AUDIENCE is not the default."`
+	Channel           string `env:"CONFIGHUB_CHANNEL" json:"CONFIGHUB_CHANNEL" description:"ConfigHub Channel argobot claims and polls, as space/slug or a UUID. Its Subscriptions, set with cub, decide which events argobot receives. Required."`
+	Target            string `env:"CONFIGHUB_TARGET" json:"CONFIGHUB_TARGET" description:"ConfigHub Target that represents the cluster, as space/slug or a UUID. When set, argobot stores facts about the cluster on it at startup, which needs Edit on the Target."`
+	Controller        string `env:"GITOPS_CONTROLLER" json:"GITOPS_CONTROLLER" default:"argocd" enum:"argocd,sveltos,flux" description:"GitOps controller argobot drives."`
+	FluxNamespace     string `env:"FLUX_NAMESPACE" json:"FLUX_NAMESPACE" default:"flux-system" description:"Flux only: where argobot looks for the OCIRepository named after a Space when listing OCIRepositories fails."`
+	ArgoNamespace     string `env:"ARGO_NAMESPACE" json:"ARGO_NAMESPACE" default:"argocd" description:"Argo CD only: namespace holding the Applications."`
+	ArgoRefreshType   string `env:"ARGO_REFRESH_TYPE" json:"ARGO_REFRESH_TYPE" default:"hard" enum:"hard,normal" description:"Argo CD only: refresh to request. hard re-resolves the source, including an OCI tag's digest."`
+	ArgoApp           string `env:"ARGO_APP" json:"ARGO_APP" description:"Argo CD only: the one Application every event syncs. Unset, the event's Space names the Applications to sync."`
+	ReportLiveStatus  string `env:"CONFIGHUB_REPORT_LIVE_STATUS" json:"CONFIGHUB_REPORT_LIVE_STATUS" default:"true" enum:"true,false" description:"Whether argobot writes the status of what the controller deployed to each Release's LiveStatus."`
+}
+
 func loadConfig() (config, error) {
+	var env envVars
+	if err := envconfig.Process(context.Background(), &env); err != nil {
+		return config{}, fmt.Errorf("read the environment: %w", err)
+	}
 	cfg := config{
-		ConfigHubURL:      os.Getenv("CONFIGHUB_URL"),
-		PrivateKey:        os.Getenv("CONFIGHUB_AUTH_PRIVATE_KEY"),
-		AssertionAudience: os.Getenv("CONFIGHUB_ASSERTION_AUDIENCE"),
-		Channel:           os.Getenv("CONFIGHUB_CHANNEL"),
-		Target:            os.Getenv("CONFIGHUB_TARGET"),
-		Controller:        os.Getenv("GITOPS_CONTROLLER"),
-		FluxNamespace:     os.Getenv("FLUX_NAMESPACE"),
-		ArgoNamespace:     os.Getenv("ARGO_NAMESPACE"),
-		ArgoRefreshType:   os.Getenv("ARGO_REFRESH_TYPE"),
-		ArgoApp:           os.Getenv("ARGO_APP"),
-		ReportLiveStatus:  os.Getenv("CONFIGHUB_REPORT_LIVE_STATUS") != "false",
+		ConfigHubURL:      env.ConfigHubURL,
+		PrivateKey:        env.PrivateKey,
+		AssertionAudience: env.AssertionAudience,
+		Channel:           env.Channel,
+		Target:            env.Target,
+		Controller:        env.Controller,
+		FluxNamespace:     env.FluxNamespace,
+		ArgoNamespace:     env.ArgoNamespace,
+		ArgoRefreshType:   env.ArgoRefreshType,
+		ArgoApp:           env.ArgoApp,
+		ReportLiveStatus:  env.ReportLiveStatus != "false",
 	}
 	if cfg.Controller == "" {
 		cfg.Controller = ControllerArgoCD

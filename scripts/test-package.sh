@@ -5,11 +5,13 @@
 # Renders the installer package in manifests/package the way an operator
 # would, with `installer setup`, for each controller and preset, and checks the
 # renders it has to refuse. The package's validators (vet-schemas, vet-images,
-# vet-pod-security-standard, ...) run in every render.
+# vet-pod-security-standard, vet-jsonschema of argobot's environment, ...) run
+# in every render. It also checks that validation/env.schema.json is what
+# `argobot docgen env` prints.
 #
-# Needs installer 0.2.0 or later (or $INSTALLER), kustomize and yq on PATH. It
-# gives the collector a key and a URL, so it runs no cub and needs no ConfigHub
-# server.
+# Needs installer 0.2.0 or later (or $INSTALLER), kustomize, yq and go on
+# PATH. It gives the collector a key and a URL, so it runs no cub and needs no
+# ConfigHub server.
 #
 # Usage: scripts/test-package.sh
 
@@ -43,17 +45,33 @@ version="$(yq -r .installerMetadata.version "${pkg}/installer.yaml")"
 tag="$(yq -r '.images[] | select(.name == "ghcr.io/confighub/argobot") | .newTag' "${pkg}/bases/default/kustomization.yaml")"
 [ "v${version}" = "$tag" ] || fail "installerMetadata.version is ${version}, but the package runs argobot ${tag}"
 
+# The schema the package validates argobot's environment against is generated.
+if ! (cd "$repo" && go run . docgen env) | diff -u "${pkg}/validation/env.schema.json" - >&2; then
+  fail "validation/env.schema.json is stale; regenerate it with: go run . docgen env > manifests/package/validation/env.schema.json"
+fi
+
+# render <case> <installer setup args...> renders the package; RENDER_PKG
+# renders another copy of it.
 render() {
   local name=$1
   shift
-  "$installer" setup --pull "$pkg" --work-dir "${work}/${name}" "${common[@]}" "$@" \
+  "$installer" setup --pull "${RENDER_PKG:-$pkg}" --work-dir "${work}/${name}" "${common[@]}" "$@" \
     > "${work}/${name}.log" 2>&1
 }
 
-# env_of <case> <variable>: the variable's value on argobot's container.
+# env_of <case> <variable>: the variable's value in argobot's environment, the
+# argobot-env ConfigMap.
 env_of() {
-  yq -r ".spec.template.spec.containers[] | select(.name == \"argobot\") | .env[] | select(.name == \"$2\") | .value" \
-    "${work}/$1/out/manifests/deployment-argobot-argobot.yaml"
+  yq -r ".data.$2 // \"\"" "${work}/$1/out/manifests/configmap-argobot-argobot-env.yaml"
+}
+
+# broken_copy <name> <line>: a copy of the package whose argobot.env has line
+# added, for a render that has to be refused.
+broken_copy() {
+  local copy="${work}/pkg-$1"
+  cp -R "$pkg" "$copy"
+  printf '%s\n' "$2" >> "${copy}/bases/default/argobot.env"
+  echo "$copy"
 }
 
 # expect_render <case> <controller> <installer setup args...>: the render
@@ -105,6 +123,12 @@ expect_render sveltos sveltos --select sveltos
 ns="$(yq -r '.metadata.namespace' "${work}/default/out/manifests/role-argocd-argobot-argocd.yaml")"
 [ "$ns" = argocd ] || fail "default: the Role is in ${ns}, want argocd"
 [ -z "$(env_of default CONFIGHUB_TARGET)" ] || fail "default: CONFIGHUB_TARGET is set without the target input"
+# The Deployment reads the ConfigMap ConfigHub renders in place, and rolls when
+# ConfigHub fills in its hash.
+[ "$(yq -r '.metadata.annotations["installer.confighub.com/appconfig-mutable"]' "${work}/default/out/manifests/configmap-argobot-argobot-env.yaml")" = true ] ||
+  fail "default: argobot-env is not rendered in place"
+[ "$(yq -r '.spec.template.metadata.annotations["confighub.com/Hash"]' "${work}/default/out/manifests/deployment-argobot-argobot.yaml")" = confighubplaceholder ] ||
+  fail "default: the pod template has no confighub.com/Hash for ConfigHub to fill in"
 [ "$(env_of flux CONFIGHUB_TARGET)" = test/target ] || fail "flux: CONFIGHUB_TARGET is not the target input"
 # The HealthCheck and ClusterHealthCheck are cluster-scoped.
 for f in healthcheck-argobot-live-status.yaml clusterhealthcheck-argobot-live-status.yaml; do
@@ -114,6 +138,10 @@ done
 expect_refusal two-controllers 'are alternatives in group "controller"' --select argocd --select flux
 expect_refusal latest-image vet-images \
   --set-image ghcr.io/confighub/argobot=ghcr.io/confighub/argobot:latest
+RENDER_PKG="$(broken_copy misspelled GITOPS_CONTROLER=flux)" \
+  expect_refusal misspelled-variable "Additional property GITOPS_CONTROLER is not allowed"
+RENDER_PKG="$(broken_copy bad-value CONFIGHUB_REPORT_LIVE_STATUS=maybe)" \
+  expect_refusal bad-value "CONFIGHUB_REPORT_LIVE_STATUS"
 
 if [ "$failures" -gt 0 ]; then
   echo "${failures} check(s) failed" >&2

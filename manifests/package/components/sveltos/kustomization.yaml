@@ -5,8 +5,14 @@ kind: Component
 resources:
   - clusterrole.yaml
   - healthcheck.yaml
+# The variables argobot reads to drive Sveltos, merged into the base's.
+configMapGenerator:
+  - name: argobot-env
+    namespace: confighubplaceholder
+    behavior: merge
+    envs:
+      - sveltos.env
 patches:
-  - path: deployment-env.yaml
   # Read ClusterSummaries and HealthCheckReports, for live status.
   - target:
       kind: ClusterRole

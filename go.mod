@@ -6,6 +6,8 @@ require (
 	github.com/confighub/sdk/core v0.9.4
 	github.com/confighub/sdk/k8sutil v0.9.4
 	github.com/google/uuid v1.6.0
+	github.com/sethvargo/go-envconfig v1.3.0
+	github.com/swaggest/jsonschema-go v0.3.78
 	golang.org/x/sync v0.21.0
 	k8s.io/apimachinery v0.35.1
 	k8s.io/client-go v0.35.1
@@ -45,9 +47,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
-	github.com/sethvargo/go-envconfig v1.3.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	github.com/swaggest/jsonschema-go v0.3.78 // indirect
 	github.com/swaggest/refl v1.4.0 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
