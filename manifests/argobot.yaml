@@ -14,8 +14,8 @@
 # manifest lets it float through GitOps without shipping or overwriting secrets.
 # Expected key: CONFIGHUB_AUTH_PRIVATE_KEY (the service account's private JWK).
 #
-# CONFIGHUB_CHANNEL and CONFIGHUB_TARGET are confighubplaceholder: set them for
-# the cluster before applying, as a ConfigHub variant of this base does.
+# CONFIGHUB_CHANNEL and CONFIGHUB_TARGET are ConfigHub placeholders: set them
+# for the cluster before applying, as a ConfigHub variant of this base does.
 #
 # The image is the argobot release this manifest ships with. Each argobot image
 # carries it as /manifests/argocd.yaml.

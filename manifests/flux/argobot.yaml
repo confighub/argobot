@@ -18,8 +18,8 @@
 # argobot needs Flux 2.6 or later, which serves OCIRepository as
 # source.toolkit.fluxcd.io/v1.
 #
-# CONFIGHUB_CHANNEL and CONFIGHUB_TARGET are confighubplaceholder: set them for
-# the cluster before applying, as a ConfigHub variant of this base does.
+# CONFIGHUB_CHANNEL and CONFIGHUB_TARGET are ConfigHub placeholders: set them
+# for the cluster before applying, as a ConfigHub variant of this base does.
 #
 # The image is the argobot release this manifest ships with. Each argobot image
 # carries it as /manifests/flux.yaml.
