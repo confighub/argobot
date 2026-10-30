@@ -17,8 +17,8 @@
 # Needs a native Go toolchain at least as new as go.mod requires. A toolchain
 # served from the module cache makes go-licenses fail with "does not have module
 # info" for stdlib packages (go-licenses issue #128); on such a host run it in
-# the golang:1.25 image instead:
-#   docker run --rm -v "$PWD":/src -w /src -e GOTOOLCHAIN=local golang:1.25 \
+# the golang:1.26 image instead:
+#   docker run --rm -v "$PWD":/src -w /src -e GOTOOLCHAIN=local golang:1.26 \
 #     sh -c 'git config --global --add safe.directory /src && ./scripts/gen-third-party-licenses.sh'
 
 set -euo pipefail

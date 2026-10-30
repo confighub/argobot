@@ -52,13 +52,13 @@ SUMMARY (module — license type — source)
   github.com/xlab/treeprint                               MIT          https://github.com/xlab/treeprint/blob/v1.2.0/LICENSE
   go.yaml.in/yaml/v2                                      Apache-2.0   https://github.com/yaml/go-yaml/blob/v2.4.3/LICENSE
   go.yaml.in/yaml/v3                                      MIT          https://github.com/yaml/go-yaml/blob/v3.0.4/LICENSE
-  golang.org/x/net                                        BSD-3-Clause https://cs.opensource.google/go/x/net/+/v0.56.0:LICENSE
+  golang.org/x/net                                        BSD-3-Clause https://cs.opensource.google/go/x/net/+/v0.60.0:LICENSE
   golang.org/x/oauth2                                     BSD-3-Clause https://cs.opensource.google/go/x/oauth2/+/v0.30.0:LICENSE
-  golang.org/x/sync/errgroup                              BSD-3-Clause https://cs.opensource.google/go/x/sync/+/v0.21.0:LICENSE
-  golang.org/x/sys                                        BSD-3-Clause https://cs.opensource.google/go/x/sys/+/v0.46.0:LICENSE
-  golang.org/x/term                                       BSD-3-Clause https://cs.opensource.google/go/x/term/+/v0.44.0:LICENSE
-  golang.org/x/text                                       BSD-3-Clause https://cs.opensource.google/go/x/text/+/v0.38.0:LICENSE
-  golang.org/x/time/rate                                  BSD-3-Clause https://cs.opensource.google/go/x/time/+/v0.9.0:LICENSE
+  golang.org/x/sync/errgroup                              BSD-3-Clause https://cs.opensource.google/go/x/sync/+/v0.23.0:LICENSE
+  golang.org/x/sys                                        BSD-3-Clause https://cs.opensource.google/go/x/sys/+/v0.48.0:LICENSE
+  golang.org/x/term                                       BSD-3-Clause https://cs.opensource.google/go/x/term/+/v0.46.0:LICENSE
+  golang.org/x/text                                       BSD-3-Clause https://cs.opensource.google/go/x/text/+/v0.42.0:LICENSE
+  golang.org/x/time/rate                                  BSD-3-Clause https://cs.opensource.google/go/x/time/+/v0.15.0:LICENSE
   google.golang.org/protobuf                              BSD-3-Clause https://github.com/protocolbuffers/protobuf-go/blob/v1.36.8/LICENSE
   gopkg.in/evanphx/json-patch.v4                          BSD-3-Clause https://github.com/evanphx/json-patch/blob/v4.13.0/LICENSE
   gopkg.in/inf.v0                                         BSD-3-Clause https://github.com/go-inf/inf/blob/v0.9.1/LICENSE
@@ -3878,7 +3878,7 @@ limitations under the License.
 --------------------------------------------------------------------------------
 Module:  golang.org/x/net
 License: BSD-3-Clause
-Source:  https://cs.opensource.google/go/x/net/+/v0.56.0:LICENSE
+Source:  https://cs.opensource.google/go/x/net/+/v0.60.0:LICENSE
 --------------------------------------------------------------------------------
 
 Copyright 2009 The Go Authors.
@@ -3948,7 +3948,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 Module:  golang.org/x/sync/errgroup
 License: BSD-3-Clause
-Source:  https://cs.opensource.google/go/x/sync/+/v0.21.0:LICENSE
+Source:  https://cs.opensource.google/go/x/sync/+/v0.23.0:LICENSE
 --------------------------------------------------------------------------------
 
 Copyright 2009 The Go Authors.
@@ -3983,7 +3983,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 Module:  golang.org/x/sys
 License: BSD-3-Clause
-Source:  https://cs.opensource.google/go/x/sys/+/v0.46.0:LICENSE
+Source:  https://cs.opensource.google/go/x/sys/+/v0.48.0:LICENSE
 --------------------------------------------------------------------------------
 
 Copyright 2009 The Go Authors.
@@ -4018,7 +4018,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 Module:  golang.org/x/term
 License: BSD-3-Clause
-Source:  https://cs.opensource.google/go/x/term/+/v0.44.0:LICENSE
+Source:  https://cs.opensource.google/go/x/term/+/v0.46.0:LICENSE
 --------------------------------------------------------------------------------
 
 Copyright 2009 The Go Authors.
@@ -4053,7 +4053,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 Module:  golang.org/x/text
 License: BSD-3-Clause
-Source:  https://cs.opensource.google/go/x/text/+/v0.38.0:LICENSE
+Source:  https://cs.opensource.google/go/x/text/+/v0.42.0:LICENSE
 --------------------------------------------------------------------------------
 
 Copyright 2009 The Go Authors.
@@ -4088,7 +4088,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 Module:  golang.org/x/time/rate
 License: BSD-3-Clause
-Source:  https://cs.opensource.google/go/x/time/+/v0.9.0:LICENSE
+Source:  https://cs.opensource.google/go/x/time/+/v0.15.0:LICENSE
 --------------------------------------------------------------------------------
 
 Copyright 2009 The Go Authors.

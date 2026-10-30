@@ -8,6 +8,7 @@
 # `docker buildx imagetools inspect alpine:3.24 --format '{{.Manifest.Digest}}'`,
 # update this digest, and refresh the package list in OS_LICENSE_NOTICE.txt.
 ARG ALPINE_BASE=alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+ARG GO_VERSION=1.26
 
 ###############
 # Build stage #
@@ -16,7 +17,7 @@ ARG ALPINE_BASE=alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db869
 # cross-compiles the Go binary for the TARGET arch. CGO is disabled, so this is a
 # fast pure-Go cross-compile with no QEMU emulation. Buildx injects the
 # BUILDPLATFORM / TARGETOS / TARGETARCH args automatically.
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS builder
 RUN apk add --no-cache ca-certificates
 WORKDIR /go/src/app
 
