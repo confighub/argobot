@@ -9,7 +9,7 @@
 # in every render. It also checks that validation/env.schema.json is what
 # `argobot docgen env` prints.
 #
-# Needs installer 0.2.0 or later (or $INSTALLER), kustomize, yq and go on
+# Needs installer 0.3.0 or later (or $INSTALLER), kustomize, yq and go on
 # PATH. It gives the collector a key and a URL, so it runs no cub and needs no
 # ConfigHub server.
 #

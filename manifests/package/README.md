@@ -43,10 +43,10 @@ argobot needs the following before installing it, set up as under [Setup](../../
 - its grants on the cluster's Target
 - a Channel that the service account can claim
 
-It needs installer 0.2.0 or later. Unless you pass `private_key_file`, the installer's collector issues the service account's key with `cub`, so `cub` must be signed in to the organization that holds them.
+It needs installer 0.3.0 or later. Unless you pass `private_key_file`, the installer's collector issues the service account's key with `cub`, so `cub` must be signed in to the organization that holds them.
 
 ```sh
-installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.2.3 \
+installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.2.4 \
   --work-dir argobot-my-cluster --namespace argobot \
   --input service_account=argobot-my-cluster \
   --input channel=my-cluster/argobot \
@@ -78,8 +78,8 @@ To run another image, such as a mirror's copy, pass `--set-image ghcr.io/configh
 
 ## Testing
 
-`scripts/test-package.sh` renders the package for each controller and preset with `installer setup`, running its validators, and checks the renders it has to refuse. It needs installer 0.2.0 or later (or `$INSTALLER`), kustomize and yq, and no ConfigHub server. The `package` workflow runs it on every change.
+`scripts/test-package.sh` renders the package for each controller and preset with `installer setup`, running its validators, and checks the renders it has to refuse. It needs installer 0.3.0 or later (or `$INSTALLER`), kustomize and yq, and no ConfigHub server. The `package` workflow runs it on every change.
 
 ## Publishing
 
-The package's version is the argobot release it runs: package 0.2.3 runs argobot v0.2.3. Each argobot release opens a pull request that pins the package to the new image and version (`scripts/pin-package-image.sh`, run by `release.yml`), and merging it publishes the package (`package.yml`). A version is published once, so a change to the package alone ships with the next argobot release; tag one to ship it sooner.
+The package's version is the argobot release it runs: package 0.2.4 runs argobot v0.2.4. Each argobot release opens a pull request that pins the package to the new image and version (`scripts/pin-package-image.sh`, run by `release.yml`), and merging it publishes the package (`package.yml`). A version is published once, so a change to the package alone ships with the next argobot release; tag one to ship it sooner.
