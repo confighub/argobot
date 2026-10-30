@@ -1,2 +1,0 @@
-# The collector writes the service account private key here. Never commit it.
-*.env.secret

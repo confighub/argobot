@@ -18,8 +18,11 @@
 # argobot needs Flux 2.6 or later, which serves OCIRepository as
 # source.toolkit.fluxcd.io/v1.
 #
-# `argobot install --controller flux` prints this manifest with the image pinned
-# to that argobot's version.
+# CONFIGHUB_CHANNEL and CONFIGHUB_TARGET are confighubplaceholder: set them for
+# the cluster before applying, as a ConfigHub variant of this base does.
+#
+# The image is the argobot release this manifest ships with. Each argobot image
+# carries it as /manifests/flux.yaml.
 #
 # A Space is deployed by an OCIRepository pulling it from the ConfigHub OCI
 # gateway, and a Kustomization applying it. For example:
@@ -182,7 +185,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: argobot
-          image: ghcr.io/confighub/argobot:latest
+          image: ghcr.io/confighub/argobot:v0.2.4
           env:
             # ── ConfigHub connection (required) ──────────────────────────────
             - name: CONFIGHUB_URL
@@ -214,16 +217,16 @@ spec:
             # or a UUID. Which events it delivers (and for which Spaces and
             # Targets) is the Channel's Subscriptions, set with cub, not here.
             - name: CONFIGHUB_CHANNEL
-              value: "my-cluster/argobot"
+              value: confighubplaceholder
 
             # ── Cluster facts ────────────────────────────────────────────────
             # The ConfigHub Target that represents this cluster, as
             # <space>/<slug> or a UUID. When set, argobot collects facts about
             # the cluster (Kubernetes version, served resource types, storage
             # and ingress classes) at startup and stores them on the Target
-            # under "Cluster.". Needs Edit on the Target.
-            # - name: CONFIGHUB_TARGET
-            #   value: "my-cluster/target"
+            # under "Cluster.". Needs Edit on the Target. Empty stores none.
+            - name: CONFIGHUB_TARGET
+              value: confighubplaceholder
 
             # ── Live-status reporting ────────────────────────────────────────
             # argobot watches Kustomizations and writes each Release's
