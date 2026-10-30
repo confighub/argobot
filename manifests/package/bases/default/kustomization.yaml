@@ -36,4 +36,4 @@ secretGenerator:
 images:
   - name: ghcr.io/confighub/argobot
     newName: ghcr.io/confighub/argobot
-    newTag: v0.2.3
+    newTag: v0.2.4
