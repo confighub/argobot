@@ -1,0 +1,108 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+
+name: CI Gate
+
+# Posts the "CI Gate" commit status, the one check the main ruleset requires.
+#
+# Some workflows here are path-filtered, and a required check whose workflow
+# does not run for a PR leaves the PR waiting for it forever, so none of them
+# can be required directly. Instead, this workflow looks at the latest run of
+# each workflow listed under workflow_run for a commit and sets the status:
+#   failure  if any of them failed or was cancelled
+#   pending  if any of them has not finished, or none has started yet
+#   success  otherwise; a workflow skipped by its path filter does not count
+#
+# It recomputes the status when a PR's head changes and whenever a listed
+# workflow is requested (including a re-run) or completes, so re-running a
+# failed workflow updates the gate on its own.
+#
+# A workflow that should block merging is added to the list below; the status
+# is computed from the same list. workflow_run uses this file as it is on
+# main, so a change to the list takes effect once it is merged.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_run:
+    workflows:
+      - build
+      - third-party-licenses
+    types: [requested, completed]
+
+# Events for one commit are serialized so an older computation cannot post
+# over a newer one.
+concurrency:
+  group: ci-gate-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  statuses: write
+
+jobs:
+  status:
+    name: Update CI Gate status
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/workflows/ci-gate.yml
+          sparse-checkout-cone-mode: false
+
+      - name: Set the CI Gate status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+          GATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          workflows=$(yq -o=json -I=0 '.on.workflow_run.workflows' .github/workflows/ci-gate.yml)
+
+          # The latest run of each listed workflow for this commit. A re-run
+          # keeps its run ID, and the API reports its latest attempt.
+          runs=$(gh api --paginate "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+              --jq '.workflow_runs[]' |
+            jq -s --argjson wf "$workflows" '
+              [.[] | select(.name as $n | $wf | index($n))]
+              | group_by(.workflow_id) | map(max_by(.id))')
+
+          failed=$(jq -c '[.[] | select(.status == "completed"
+            and (.conclusion | IN("success", "skipped", "neutral") | not))]' <<<"$runs")
+          running=$(jq -c '[.[] | select(.status != "completed")]' <<<"$runs")
+
+          # build runs on every PR, so a commit with no runs yet is one whose
+          # workflows have not been created yet, not one with nothing to run.
+          if [ "$(jq length <<<"$failed")" -gt 0 ]; then
+            state=failure
+            description="Failed: $(jq -r 'map(.name) | join(", ")' <<<"$failed")"
+            target_url=$(jq -r '.[0].html_url' <<<"$failed")
+          elif [ "$(jq length <<<"$running")" -gt 0 ]; then
+            state=pending
+            description="Waiting for: $(jq -r 'map(.name) | join(", ")' <<<"$running")"
+            target_url=$(jq -r '.[0].html_url' <<<"$running")
+          elif [ "$(jq length <<<"$runs")" -eq 0 ]; then
+            state=pending
+            description="Waiting for workflows to start"
+            target_url=$GATE_RUN_URL
+          else
+            state=success
+            description="Passed: $(jq -r 'map(.name) | join(", ")' <<<"$runs")"
+            target_url=$GATE_RUN_URL
+          fi
+
+          # A commit status description is limited to 140 characters.
+          if [ "${#description}" -gt 140 ]; then
+            description="${description:0:137}..."
+          fi
+
+          echo "$state: $description"
+          gh api "repos/$REPO/statuses/$SHA" \
+            -f state="$state" \
+            -f context="CI Gate" \
+            -f description="$description" \
+            -f target_url="$target_url" >/dev/null
