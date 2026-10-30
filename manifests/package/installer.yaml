@@ -6,7 +6,7 @@ metadata:
   name: argobot
 installerMetadata:
   # The argobot release the package runs; release.yml sets it.
-  version: 0.2.4
+  version: 0.2.5
   # componentGroups and vet-pod-security-standard.
   installerVersion: ">= 0.3.0"
 spec:
