@@ -151,7 +151,7 @@ For Sveltos, deploy `manifests/sveltos/argobot.yaml` instead; see [Sveltos](#sve
 The three manifests are built into the binary. `argobot install` prints the one for a controller, with the image pinned to the argobot version that printed it (a development build pins `latest`), for `kubectl apply` or for loading into ConfigHub:
 
 ```sh
-docker run --rm ghcr.io/confighub/argobot:v0.2.3 install --controller flux | kubectl apply -f -
+docker run --rm ghcr.io/confighub/argobot:v0.2.4 install --controller flux | kubectl apply -f -
 ```
 
 | Flag | Default | Description |
