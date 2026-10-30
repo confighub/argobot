@@ -5,7 +5,7 @@ name: third-party-licenses
 
 # Regenerates THIRD_PARTY_LICENSES.txt (the notices shipped in the image) and
 # fails if it drifts from what is committed, or if a forbidden or restricted
-# (copyleft) license gets pulled in. Runs in golang:1.25 so GOROOT is the native
+# (copyleft) license gets pulled in. Runs in golang:1.26 so GOROOT is the native
 # stdlib; a toolchain-managed GOROOT breaks go-licenses (see the script header).
 on:
   pull_request:
@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: golang:1.25
+      image: golang:1.26
     env:
       GOTOOLCHAIN: local
     steps:
