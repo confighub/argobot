@@ -20,9 +20,14 @@ name: CI Gate
 # A workflow that should block merging is added to the list below; the status
 # is computed from the same list. workflow_run uses this file as it is on
 # main, so a change to the list takes effect once it is merged.
+#
+# PRs come from forks, and a pull_request run for a fork gets a read-only
+# token that cannot post the status, so this uses pull_request_target. That
+# runs this file and checks out the code as they are on main, never the PR's,
+# so no PR code runs with the write token; keep it that way.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened]
   workflow_run:
     workflows:
