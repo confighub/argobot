@@ -45,7 +45,7 @@ argobot needs the following before installing it, set up as under [Setup](../../
 It needs installer 0.3.0 or later. The key never goes to ConfigHub: put it in the `argobot-secrets` Secret in the install namespace yourself, or with your secret store, under the key `CONFIGHUB_AUTH_PRIVATE_KEY`.
 
 ```sh
-installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.2.4 \
+installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.2.5 \
   --work-dir argobot-my-cluster --namespace argobot \
   --input channel=my-cluster/argobot \
   --input target=my-cluster/target
@@ -70,7 +70,7 @@ To run another image, such as a mirror's copy, pass `--set-image ghcr.io/configh
 Every input is optional, so one install can be the base that each cluster's variant is cloned from. Leave `channel` and `target` unset, and set them in each variant's `argobot-env` Unit:
 
 ```sh
-installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.2.4 \
+installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.2.5 \
   --work-dir argobot-base --namespace argobot
 installer upload --work-dir argobot-base --space argobot-base
 cub variant create --target my-cluster/target my-cluster argobot-base
@@ -88,4 +88,4 @@ cub function do --space argobot-my-cluster --unit argobot-env --toolchain AppCon
 
 ## Publishing
 
-The package's version is the argobot release it runs: package 0.2.4 runs argobot v0.2.4. `scripts/set-version.sh vX.Y.Z` sets both before a release is tagged, and the release publishes the package after its image (`release.yml`). A version is published once, so a change to the package alone ships with the next argobot release.
+The package's version is the argobot release it runs: package 0.2.5 runs argobot v0.2.5. `scripts/set-version.sh vX.Y.Z` sets both before a release is tagged, and the release publishes the package after its image (`release.yml`). A version is published once, so a change to the package alone ships with the next argobot release.
