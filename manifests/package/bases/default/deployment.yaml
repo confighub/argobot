@@ -34,7 +34,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: argobot
-          image: ghcr.io/confighub/argobot:v0.2.7
+          image: ghcr.io/confighub/argobot:v0.2.8
           # argobot-env holds every variable but the key. ConfigHub sets
           # confighub.com/Hash below to the ConfigMap's content hash, so a
           # change to it rolls the pods.
