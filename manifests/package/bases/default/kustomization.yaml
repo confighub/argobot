@@ -20,7 +20,7 @@ configMapGenerator:
     options:
       disableNameSuffixHash: true
       annotations:
-        installer.confighub.com/toolchain: AppConfig/Env
+        confighub.com/toolchain: AppConfig/Env
 # The collector writes the service account's private key to this file. It is
 # never bundled or committed, and the Secret it becomes is rendered to
 # out/secrets/, which installer upload leaves out: apply it to the cluster

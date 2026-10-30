@@ -125,7 +125,7 @@ ns="$(yq -r '.metadata.namespace' "${work}/default/out/manifests/role-argocd-arg
 [ -z "$(env_of default CONFIGHUB_TARGET)" ] || fail "default: CONFIGHUB_TARGET is set without the target input"
 # The Deployment reads the ConfigMap ConfigHub renders in place, and rolls when
 # ConfigHub fills in its hash.
-[ "$(yq -r '.metadata.annotations["installer.confighub.com/appconfig-mutable"]' "${work}/default/out/manifests/configmap-argobot-argobot-env.yaml")" = true ] ||
+[ "$(yq -r '.metadata.annotations["confighub.com/appconfig-mutable"]' "${work}/default/out/manifests/configmap-argobot-argobot-env.yaml")" = true ] ||
   fail "default: argobot-env is not rendered in place"
 [ "$(yq -r '.spec.template.metadata.annotations["confighub.com/Hash"]' "${work}/default/out/manifests/deployment-argobot-argobot.yaml")" = confighubplaceholder ] ||
   fail "default: the pod template has no confighub.com/Hash for ConfigHub to fill in"
