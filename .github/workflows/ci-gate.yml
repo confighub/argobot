@@ -1,0 +1,80 @@
+# Copyright (C) ConfigHub, Inc.
+# SPDX-License-Identifier: MIT
+
+name: CI Gate
+
+# The "CI Gate" check is the one check the main ruleset requires.
+#
+# Some workflows here are path-filtered, and a required check whose workflow
+# does not run for a PR leaves the PR waiting for it forever, so none of them
+# can be required directly. Instead, this job waits for the latest run of each
+# workflow in WORKFLOWS for the PR's head commit and then:
+#   fails     if any of them failed or was cancelled
+#   succeeds  otherwise; a workflow skipped by its path filter does not count
+#
+# PRs come from forks, whose pull_request runs get a read-only token, so the
+# result is this job's own check rather than a commit status (which would need
+# statuses: write). It runs from the PR's copy of this file, so a change to the
+# list takes effect on the PR that makes it. Re-running a failed workflow does
+# not update the gate on its own; re-run this job afterwards.
+#
+# A workflow that should block merging is added to WORKFLOWS below.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# A newer push supersedes the wait for an older one.
+concurrency:
+  group: ci-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+
+jobs:
+  gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Wait for the gated workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          WORKFLOWS: |
+            ["build", "third-party-licenses"]
+        run: |
+          set -euo pipefail
+
+          while :; do
+            # The latest run of each listed workflow for this commit. A re-run
+            # keeps its run ID, and the API reports its latest attempt.
+            runs=$(gh api --paginate "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+                --jq '.workflow_runs[]' |
+              jq -s --argjson wf "$WORKFLOWS" '
+                [.[] | select(.name as $n | $wf | index($n))]
+                | group_by(.workflow_id) | map(max_by(.id))')
+
+            failed=$(jq -c '[.[] | select(.status == "completed"
+              and (.conclusion | IN("success", "skipped", "neutral") | not))]' <<<"$runs")
+            running=$(jq -c '[.[] | select(.status != "completed")]' <<<"$runs")
+
+            if [ "$(jq length <<<"$failed")" -gt 0 ]; then
+              echo "::error::Failed: $(jq -r 'map("\(.name) (\(.html_url))") | join(", ")' <<<"$failed")"
+              exit 1
+            fi
+
+            # build runs on every PR, so a commit with no runs yet is one whose
+            # workflows have not been created yet, not one with nothing to run.
+            if [ "$(jq length <<<"$runs")" -eq 0 ]; then
+              echo "Waiting for workflows to start"
+            elif [ "$(jq length <<<"$running")" -gt 0 ]; then
+              echo "Waiting for: $(jq -r 'map(.name) | join(", ")' <<<"$running")"
+            else
+              echo "Passed: $(jq -r 'map(.name) | join(", ")' <<<"$runs")"
+              exit 0
+            fi
+            sleep 30
+          done
