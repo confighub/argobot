@@ -16,9 +16,10 @@ spec:
       default: true
       description: |
         What argobot needs under every GitOps controller: its Namespace,
-        ServiceAccount, cluster-wide read-only access, the argobot-secrets
-        Secret holding its service account key, and the Deployment. The
-        controller group adds what one GitOps controller needs.
+        ServiceAccount, cluster-wide read-only access, and the Deployment,
+        which reads its service account key from the argobot-secrets Secret,
+        supplied out of band. The controller group adds what one GitOps
+        controller needs.
 
   components:
     - name: argocd
@@ -47,54 +48,31 @@ spec:
       components: [argocd, flux, sveltos]
       required: true
 
-  collector:
-    command: collector/collect.sh
-    description: |
-      Writes the private_key_file input's key, or else one it issues for the
-      service_account input with cub (once per work-dir), where the
-      argobot-secrets secretGenerator reads it. Reports the ConfigHub URL
-      argobot connects to: the confighub_url input, or the cub context's
-      server.
-
+  # Every input is optional: an install uploaded as a base for ConfigHub
+  # variants leaves them unset, and each variant sets them for its cluster. An
+  # unset Channel or Target stays confighubplaceholder, which a deployment
+  # must set first.
   inputs:
-    - name: service_account
-      type: string
-      required: true
-      prompt: ConfigHub service account argobot runs as
-      description: |
-        The service account argobot authenticates as. It needs Claim on the
-        Channel, and View, ViewChildren and EditChildren on the Target its
-        deployment Spaces release to (Edit too, to store cluster facts).
     - name: channel
       type: string
-      required: true
-      prompt: Channel argobot listens on, as <space>/<slug>
+      default: ""
+      prompt: Channel argobot listens on, as <space>/<slug> (optional)
       description: |
         The ConfigHub Channel argobot claims, subscribed to release.published.
-        Create it with `cub channel create`.
+        Create it with `cub channel create`. Unset is confighubplaceholder.
     - name: target
       type: string
       default: ""
       prompt: Target that represents this cluster, as <space>/<slug> (optional)
       description: |
-        When set, argobot stores facts about the cluster on this Target at
-        startup. Needs Edit on the Target.
-    - name: private_key_file
-      type: string
-      default: ""
-      prompt: Private key argobot authenticates with, as an absolute path (optional)
-      description: |
-        A private JWK the service account already has registered, such as
-        one `cub serviceaccount key add --generate` wrote. Empty issues a key
-        for the service account, once per work-dir.
+        The Target argobot stores facts about the cluster on at startup. Needs
+        Edit on the Target. Unset is confighubplaceholder.
     - name: confighub_url
       type: string
-      default: ""
-      prompt: ConfigHub URL as the cluster reaches it (optional)
+      default: https://hub.confighub.com
+      prompt: ConfigHub URL as the cluster reaches it
       description: |
-        The ConfigHub server argobot connects to. Empty is the server of the
-        cub context in effect, which a cluster can't reach when it is
-        localhost.
+        The ConfigHub server argobot connects to.
 
   validation:
     envSchema: validation/env.schema.json
@@ -120,14 +98,14 @@ spec:
             - confighubplaceholder
             - lib.projectsveltos.io/v1beta1/HealthCheck,lib.projectsveltos.io/v1beta1/ClusterHealthCheck
     - toolchain: AppConfig/Env
-      description: Connect argobot to ConfigHub. An empty target is the same as none.
+      description: Connect argobot to ConfigHub.
       invocations:
         - name: set-string-path
-          args: [Argobot, CONFIGHUB_URL, "{{ .Facts.configHubURL }}"]
+          args: [Argobot, CONFIGHUB_URL, "{{ or .Inputs.confighub_url \"confighubplaceholder\" }}"]
         - name: set-string-path
-          args: [Argobot, CONFIGHUB_CHANNEL, "{{ .Inputs.channel }}"]
+          args: [Argobot, CONFIGHUB_CHANNEL, "{{ or .Inputs.channel \"confighubplaceholder\" }}"]
         - name: set-string-path
-          args: [Argobot, CONFIGHUB_TARGET, "{{ .Inputs.target }}"]
+          args: [Argobot, CONFIGHUB_TARGET, "{{ or .Inputs.target \"confighubplaceholder\" }}"]
 
   validators:
     - toolchain: Kubernetes/YAML

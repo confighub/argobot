@@ -7,11 +7,11 @@
 # renders it has to refuse. The package's validators (vet-schemas, vet-images,
 # vet-pod-security-standard, vet-jsonschema of argobot's environment, ...) run
 # in every render. It also checks that validation/env.schema.json is what
-# `argobot docgen env` prints.
+# `argobot docgen env` prints, and that the plain manifests run the same
+# release as the package.
 #
 # Needs installer 0.3.0 or later (or $INSTALLER), kustomize, yq and go on
-# PATH. It gives the collector a key and a URL, so it runs no cub and needs no
-# ConfigHub server.
+# PATH, and no ConfigHub server.
 #
 # Usage: scripts/test-package.sh
 
@@ -24,15 +24,7 @@ installer="${INSTALLER:-installer}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# The collector copies it into the Secret; nothing authenticates with it.
-printf '{"kty":"OKP","crv":"Ed25519","x":"x","d":"d"}\n' > "${work}/key.jwk"
-common=(
-  --non-interactive --namespace argobot
-  --input service_account=test
-  --input channel=test/argobot
-  --input "private_key_file=${work}/key.jwk"
-  --input confighub_url=https://hub.example.com
-)
+common=(--non-interactive --namespace argobot)
 
 failures=0
 fail() {
@@ -44,6 +36,7 @@ fail() {
 version="$(yq -r .installerMetadata.version "${pkg}/installer.yaml")"
 tag="$(yq -r '.images[] | select(.name == "ghcr.io/confighub/argobot") | .newTag' "${pkg}/bases/default/kustomization.yaml")"
 [ "v${version}" = "$tag" ] || fail "installerMetadata.version is ${version}, but the package runs argobot ${tag}"
+"${repo}/scripts/set-version.sh" --check "$tag" >/dev/null || fail "the deployments in manifests/ don't all run argobot ${tag}"
 
 # The schema the package validates argobot's environment against is generated.
 if ! (cd "$repo" && go run . docgen env) | diff -u "${pkg}/validation/env.schema.json" - >&2; then
@@ -92,7 +85,7 @@ expect_render() {
   local got
   got="$(env_of "$name" GITOPS_CONTROLLER)"
   [ "$got" = "$controller" ] || fail "${name}: GITOPS_CONTROLLER=${got}, want ${controller}"
-  [ -s "${out}/secrets/secret-argobot-argobot-secrets.yaml" ] || fail "${name}: no argobot-secrets Secret"
+  [ -z "$(ls -A "${out}/secrets" 2>/dev/null)" ] || fail "${name}: rendered a Secret; argobot-secrets is supplied out of band"
   echo "ok: ${name}"
 }
 
@@ -113,23 +106,32 @@ expect_refusal() {
   echo "ok: ${name}"
 }
 
-expect_render default argocd --components default
-expect_render minimal argocd --components minimal
-expect_render all argocd --components all
-expect_render flux flux --select flux --input target=test/target
-expect_render sveltos sveltos --select sveltos
+connected=(--input channel=test/argobot --input target=test/target --input confighub_url=https://hub.example.com)
+expect_render base argocd
+expect_render default argocd --components default "${connected[@]}"
+expect_render minimal argocd --components minimal "${connected[@]}"
+expect_render all argocd --components all "${connected[@]}"
+expect_render flux flux --select flux "${connected[@]}"
+expect_render sveltos sveltos --select sveltos "${connected[@]}"
 
 # The Argo CD Role stays in Argo CD's namespace; argobot's own resources move.
 ns="$(yq -r '.metadata.namespace' "${work}/default/out/manifests/role-argocd-argobot-argocd.yaml")"
 [ "$ns" = argocd ] || fail "default: the Role is in ${ns}, want argocd"
-[ -z "$(env_of default CONFIGHUB_TARGET)" ] || fail "default: CONFIGHUB_TARGET is set without the target input"
+# A base, rendered with no inputs, leaves the Channel and Target for each
+# variant to set.
+for v in CONFIGHUB_CHANNEL CONFIGHUB_TARGET; do
+  [ "$(env_of base "$v")" = confighubplaceholder ] || fail "base: ${v} is $(env_of base "$v"), want confighubplaceholder"
+done
+[ "$(env_of base CONFIGHUB_URL)" = https://hub.confighub.com ] || fail "base: CONFIGHUB_URL is $(env_of base CONFIGHUB_URL)"
+for v in CONFIGHUB_CHANNEL:test/argobot CONFIGHUB_TARGET:test/target CONFIGHUB_URL:https://hub.example.com; do
+  [ "$(env_of flux "${v%%:*}")" = "${v#*:}" ] || fail "flux: ${v%%:*} is $(env_of flux "${v%%:*}"), want ${v#*:}"
+done
 # The Deployment reads the ConfigMap ConfigHub renders in place, and rolls when
 # ConfigHub fills in its hash.
 [ "$(yq -r '.metadata.annotations["confighub.com/appconfig-mutable"]' "${work}/default/out/manifests/configmap-argobot-argobot-env.yaml")" = true ] ||
   fail "default: argobot-env is not rendered in place"
 [ "$(yq -r '.spec.template.metadata.annotations["confighub.com/Hash"]' "${work}/default/out/manifests/deployment-argobot-argobot.yaml")" = confighubplaceholder ] ||
   fail "default: the pod template has no confighub.com/Hash for ConfigHub to fill in"
-[ "$(env_of flux CONFIGHUB_TARGET)" = test/target ] || fail "flux: CONFIGHUB_TARGET is not the target input"
 # The HealthCheck and ClusterHealthCheck are cluster-scoped.
 for f in healthcheck-argobot-live-status.yaml clusterhealthcheck-argobot-live-status.yaml; do
   [ -s "${work}/sveltos/out/manifests/${f}" ] || fail "sveltos: ${f} was not rendered"

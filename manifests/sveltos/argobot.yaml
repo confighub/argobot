@@ -16,12 +16,20 @@
 # argobot-secrets --from-literal=...`). Expected key: CONFIGHUB_AUTH_PRIVATE_KEY
 # (the service account's private JWK).
 #
-# `argobot install --controller sveltos` prints this manifest with the image pinned
-# to that argobot's version.
+# CONFIGHUB_CHANNEL and CONFIGHUB_TARGET are ConfigHub placeholders: set them
+# for the cluster before applying, as a ConfigHub variant of this base does.
+#
+# The image is the argobot release this manifest ships with. Each argobot image
+# carries it as /manifests/sveltos.yaml.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: argobot
+  # argobot meets the Pod Security Standards restricted level.
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -236,7 +244,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: argobot
-          image: ghcr.io/confighub/argobot:latest
+          image: ghcr.io/confighub/argobot:v0.2.4
           env:
             # ── ConfigHub connection (required) ──────────────────────────────
             - name: CONFIGHUB_URL
@@ -264,16 +272,16 @@ spec:
             # or a UUID. Which events it delivers (and for which Spaces and
             # Targets) is the Channel's Subscriptions, set with cub, not here.
             - name: CONFIGHUB_CHANNEL
-              value: "my-cluster/argobot"
+              value: confighubplaceholder
 
             # ── Cluster facts ────────────────────────────────────────────────
             # The ConfigHub Target that represents this cluster, as
             # <space>/<slug> or a UUID. When set, argobot collects facts about
             # the cluster (Kubernetes version, served resource types, storage
             # and ingress classes) at startup and stores them on the Target
-            # under "Cluster.". Needs Edit on the Target.
-            # - name: CONFIGHUB_TARGET
-            #   value: "my-cluster/target"
+            # under "Cluster.". Needs Edit on the Target. Empty stores none.
+            - name: CONFIGHUB_TARGET
+              value: confighubplaceholder
 
             # ── Live-status reporting ────────────────────────────────────────
             # argobot watches the HealthCheckReports the HealthCheck above

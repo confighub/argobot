@@ -28,10 +28,13 @@ RUN go mod download
 COPY . .
 ARG TARGETOS
 ARG TARGETARCH
-# VERSION is the release the binary reports; `argobot install` pins its image
-# to it. release.yml passes the git tag; any other build is "dev".
-ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags "-X main.version=${VERSION}" -o /go/bin/argobot .
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /go/bin/argobot .
+# argobot's Kubernetes deployments, one per controller, named by the
+# GITOPS_CONTROLLER value each one sets.
+RUN mkdir /manifests \
+ && cp manifests/argobot.yaml /manifests/argocd.yaml \
+ && cp manifests/flux/argobot.yaml /manifests/flux.yaml \
+ && cp manifests/sveltos/argobot.yaml /manifests/sveltos.yaml
 
 #################
 # Runtime stage #
@@ -51,4 +54,7 @@ COPY --from=builder /go/bin/argobot .
 #                              regenerate with scripts/gen-third-party-licenses.sh
 #   OS_LICENSE_NOTICE.txt    — Alpine base OS packages + GPL source offer
 COPY --from=builder /go/src/app/LICENSE /go/src/app/THIRD_PARTY_LICENSES.txt /go/src/app/OS_LICENSE_NOTICE.txt ./
+# The deployments name the image they ship in. They are the image's last layer,
+# so `cub cluster attach` reads them by fetching that one small layer.
+COPY --from=builder /manifests /manifests
 ENTRYPOINT ["/app/argobot"]

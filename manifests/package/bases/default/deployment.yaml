@@ -43,7 +43,9 @@ spec:
                 name: argobot-env
           env:
             # The service account key argobot authenticates with: a private
-            # JWK, from the Secret the base's secretGenerator makes.
+            # JWK, as `cub serviceaccount key add --generate` writes it. The
+            # Secret is not part of the package: create it in the install
+            # namespace yourself, or with your secret store.
             - name: CONFIGHUB_AUTH_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:

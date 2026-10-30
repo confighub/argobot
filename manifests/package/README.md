@@ -6,8 +6,7 @@ The base holds what argobot needs under every GitOps controller:
 - its Namespace (Pod Security Standards restricted)
 - its ServiceAccount
 - cluster-wide read-only access, without Secrets
-- the `argobot-secrets` Secret
-- the Deployment, at a pinned image tag
+- the Deployment, at a pinned image tag, reading its key from the `argobot-secrets` Secret, which is not part of the package
 - argobot's environment, but for its key: the `argobot-env` ConfigMap, generated from `bases/default/argobot.env`
 
 Select one controller component with it:
@@ -39,42 +38,49 @@ The ConfigMap has no name suffix (`disableNameSuffixHash`), so ConfigHub renders
 ## Install
 
 argobot needs the following before installing it, set up as under [Setup](../../README.md#setup):
-- a service account
+- a service account, and a key of it (`cub serviceaccount key add --generate`)
 - its grants on the cluster's Target
 - a Channel that the service account can claim
 
-It needs installer 0.3.0 or later. Unless you pass `private_key_file`, the installer's collector issues the service account's key with `cub`, so `cub` must be signed in to the organization that holds them.
+It needs installer 0.3.0 or later. The key never goes to ConfigHub: put it in the `argobot-secrets` Secret in the install namespace yourself, or with your secret store, under the key `CONFIGHUB_AUTH_PRIVATE_KEY`.
 
 ```sh
 installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.2.4 \
   --work-dir argobot-my-cluster --namespace argobot \
-  --input service_account=argobot-my-cluster \
   --input channel=my-cluster/argobot \
   --input target=my-cluster/target
-# The key never goes to ConfigHub: apply its Secret to the cluster yourself,
-# with the Namespace it goes in.
-kubectl apply -f argobot-my-cluster/out/manifests/namespace-argobot.yaml \
-  -f argobot-my-cluster/out/secrets/
-installer upload --work-dir argobot-my-cluster --space argobot-base
-# Deploy it to the cluster. On a cluster `cub cluster up` or `cub cluster
-# attach` set up, this also adds argobot's Argo CD Application.
-cub variant create --target my-cluster/target my-cluster argobot-base
-cub release publish argobot-my-cluster
+installer upload --work-dir argobot-my-cluster --space argobot-my-cluster
+kubectl create namespace argobot
+kubectl create secret generic argobot-secrets -n argobot \
+  --from-file=CONFIGHUB_AUTH_PRIVATE_KEY=argobot-my-cluster.jwk
 ```
 
 Add `--select flux` or `--select sveltos` for those controllers.
 
 | Input | Default | Description |
 |---|---|---|
-| `service_account` | required | The service account argobot authenticates as. |
-| `channel` | required | The Channel argobot claims, as `<space>/<slug>`. |
-| `target` | none | The Target that stands for the cluster, as `<space>/<slug>`. When set, argobot stores the cluster's facts on it. |
-| `private_key_file` | none | A private JWK the service account already has registered, as an absolute path, such as the one `cub serviceaccount key add --generate` writes. Without it, the collector issues a key. |
-| `confighub_url` | the cub context's server | The ConfigHub URL as the cluster reaches it. |
-
-Without `private_key_file`, the collector issues one key per work-dir and keeps it in `out/secrets/argobot-private-key.jwk`, so later setups, including upgrades with `setup --pull`, reuse it. `setup --clean` removes it, and the next setup issues a new key. Delete the old one with `cub serviceaccount key delete`.
+| `channel` | `confighubplaceholder` | The Channel argobot claims, as `<space>/<slug>`. |
+| `target` | `confighubplaceholder` | The Target that stands for the cluster, as `<space>/<slug>`. argobot stores the cluster's facts on it. |
+| `confighub_url` | `https://hub.confighub.com` | The ConfigHub URL as the cluster reaches it. |
 
 To run another image, such as a mirror's copy, pass `--set-image ghcr.io/confighub/argobot=<registry>/argobot:<tag>`.
+
+### As a base for variants
+
+Every input is optional, so one install can be the base that each cluster's variant is cloned from. Leave `channel` and `target` unset, and set them in each variant's `argobot-env` Unit:
+
+```sh
+installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.2.4 \
+  --work-dir argobot-base --namespace argobot
+installer upload --work-dir argobot-base --space argobot-base
+cub variant create --target my-cluster/target my-cluster argobot-base
+cub function do --space argobot-my-cluster --unit argobot-env --toolchain AppConfig/Env \
+  set-string-path Argobot CONFIGHUB_CHANNEL my-cluster/argobot
+cub function do --space argobot-my-cluster --unit argobot-env --toolchain AppConfig/Env \
+  set-string-path Argobot CONFIGHUB_TARGET my-cluster/target
+```
+
+`cub cluster attach --k8sbot-installer` installs argobot this way.
 
 ## Testing
 
@@ -82,4 +88,4 @@ To run another image, such as a mirror's copy, pass `--set-image ghcr.io/configh
 
 ## Publishing
 
-The package's version is the argobot release it runs: package 0.2.4 runs argobot v0.2.4. Each argobot release opens a pull request that pins the package to the new image and version (`scripts/pin-package-image.sh`, run by `release.yml`), and merging it publishes the package (`package.yml`). A version is published once, so a change to the package alone ships with the next argobot release; tag one to ship it sooner.
+The package's version is the argobot release it runs: package 0.2.4 runs argobot v0.2.4. `scripts/set-version.sh vX.Y.Z` sets both before a release is tagged, and the release publishes the package after its image (`release.yml`). A version is published once, so a change to the package alone ships with the next argobot release.

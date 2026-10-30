@@ -6,10 +6,11 @@ name: release
 # The container image is versioned with semver and is cut ONLY when you push a
 # git tag vX.Y.Z. It is immutable per version.
 #
-# argobot's Kubernetes deployments are built into the binary rather than
-# published separately: `argobot install --controller argo|flux|sveltos` prints
-# the one for a controller, pinned to the image of the same version. The build
-# stamps that version from the git tag.
+# The image carries argobot's Kubernetes deployments, one per controller, in
+# /manifests, and each names the image it ships in. So the version is set
+# before the tag: scripts/set-version.sh vX.Y.Z, merged, then the tag. A tag the
+# deployments don't name fails here, before anything is pushed. After the image,
+# the installer package, which names the same release, is published.
 on:
   push:
     tags: ['v*']
@@ -31,6 +32,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Check that the deployments name this release
+        run: scripts/set-version.sh --check "${{ github.ref_name }}"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -50,7 +54,7 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           # {{raw}} keeps the leading v, so the image tag equals the git tag
-          # equals the version stamped into the binary — no v-prefix mismatch.
+          # equals the tag the deployments name — no v-prefix mismatch.
           tags: |
             type=semver,pattern={{raw}}
             type=sha
@@ -71,9 +75,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # The version `argobot install` pins the image to.
-          build-args: |
-            VERSION=${{ github.ref_name }}
           # Attach an SPDX SBOM and provenance to the image manifest. Together with
           # the notice files copied into the image, this is the per-release
           # inventory of what the image contains:
@@ -83,44 +84,76 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Pin the installer package to the image just released, as a pull request:
-  # the package names a tag, never latest, so a release reaches it only
-  # through a change to it. Merging that change publishes the package
-  # (package.yml). Opening the pull request needs "Allow GitHub Actions to
-  # create and approve pull requests" in the repository's Actions settings, and
-  # a pull request opened with GITHUB_TOKEN starts no workflows of its own.
+  # Publish the installer package, which runs the image just pushed, as
+  # oci://ghcr.io/confighub/packages/argobot:<version>, signed keylessly. Its
+  # version is the release's without the "v", and is published once.
   package:
     needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      packages: write
+      # Keyless signing.
+      id-token: write
+    env:
+      PACKAGE_DIR: manifests/package
+      PACKAGE_REPO: ghcr.io/confighub/packages/argobot
+      INSTALLER_VERSION: v0.3.0
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: main
 
-      - name: Open a pull request pinning the package to the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-          PACKAGE_DIR: manifests/package
+      # test-package.sh compares the package's env schema with docgen env.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install the installer
         run: |
           set -euo pipefail
-          scripts/pin-package-image.sh "$TAG"
-          if git diff --quiet; then
-            exit 0
-          fi
-          next=$(yq -r .installerMetadata.version "${PACKAGE_DIR}/installer.yaml")
-          git diff --stat
+          base="https://github.com/confighub/installer/releases/download/${INSTALLER_VERSION}"
+          curl -fsSLO "${base}/installer-linux-amd64"
+          curl -fsSLO "${base}/installer-linux-amd64.sha256"
+          sha256sum -c installer-linux-amd64.sha256
+          install -m 0755 installer-linux-amd64 /usr/local/bin/installer
+          rm installer-linux-amd64 installer-linux-amd64.sha256
 
-          branch="package-argobot-${TAG}"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git switch -c "$branch"
-          git commit -am "Pin the installer package to argobot ${TAG}"
-          git push -f origin "$branch"
-          gh pr create --base main --head "$branch" \
-            --title "Pin the installer package to argobot ${TAG}" \
-            --body "Pins the installer package's image to \`${IMAGE}:${TAG}\`, which the ${TAG} release just pushed, as package version ${next}. Merging publishes it."
+      - name: Test the package
+        run: scripts/test-package.sh
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | installer login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          version=$(yq -r .installerMetadata.version "${PACKAGE_DIR}/installer.yaml")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          installer package "$PACKAGE_DIR" -o "${RUNNER_TEMP}/argobot.tgz"
+
+      - name: Check whether the version is published
+        id: published
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          if installer list "oci://${PACKAGE_REPO}" 2>/dev/null | grep -qx "$VERSION"; then
+            echo "::notice::Package ${VERSION} is already published."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install cosign
+        if: steps.published.outputs.exists == 'false'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Push and sign
+        if: steps.published.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          installer push "${RUNNER_TEMP}/argobot.tgz" "oci://${PACKAGE_REPO}:${VERSION}"
+          installer sign "oci://${PACKAGE_REPO}:${VERSION}" --yes

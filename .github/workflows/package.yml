@@ -3,11 +3,8 @@
 
 name: package
 
-# Tests argobot's installer package (manifests/package) and publishes it as
-# oci://ghcr.io/confighub/packages/argobot:<installerMetadata.version>, signed
-# keylessly. The package's version is the argobot release it runs, so each
-# version is published once, when release.yml's pull request pinning the
-# package to that release merges.
+# Tests argobot's installer package (manifests/package). release.yml publishes
+# it, after the image it runs.
 on:
   push:
     branches: [main]
@@ -30,13 +27,9 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  # Keyless signing.
-  id-token: write
 
 env:
-  PACKAGE_DIR: manifests/package
-  PACKAGE_REPO: ghcr.io/confighub/packages/argobot
+  # release.yml installs the same one.
   INSTALLER_VERSION: v0.3.0
 
 jobs:
@@ -66,45 +59,3 @@ jobs:
       # Run it locally the same way.
       - name: Test the package
         run: scripts/test-package.sh
-
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | installer login ghcr.io --username "${{ github.actor }}" --password-stdin
-
-      - name: Package
-        id: package
-        run: |
-          set -euo pipefail
-          version=$(yq -r .installerMetadata.version "${PACKAGE_DIR}/installer.yaml")
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          installer package "$PACKAGE_DIR" -o "${RUNNER_TEMP}/argobot.tgz" | tee "${RUNNER_TEMP}/package.out"
-          echo "digest=$(awk '/digest:/ {print $2}' "${RUNNER_TEMP}/package.out")" >> "$GITHUB_OUTPUT"
-
-      # A version is published once. A change to the package after its version
-      # is published ships with the next argobot release, which release.yml
-      # pins the package to.
-      - name: Check whether the version is published
-        id: published
-        env:
-          VERSION: ${{ steps.package.outputs.version }}
-        run: |
-          set -euo pipefail
-          if installer list "oci://${PACKAGE_REPO}" 2>/dev/null | grep -qx "$VERSION"; then
-            echo "::notice::Package ${VERSION} is already published; changes to it ship with the next argobot release."
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Package ${VERSION} is not published yet."
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install cosign
-        if: github.event_name != 'pull_request' && steps.published.outputs.exists == 'false'
-        uses: sigstore/cosign-installer@v3
-
-      - name: Push and sign
-        if: github.event_name != 'pull_request' && steps.published.outputs.exists == 'false'
-        env:
-          VERSION: ${{ steps.package.outputs.version }}
-        run: |
-          set -euo pipefail
-          installer push "${RUNNER_TEMP}/argobot.tgz" "oci://${PACKAGE_REPO}:${VERSION}"
-          installer sign "oci://${PACKAGE_REPO}:${VERSION}" --yes

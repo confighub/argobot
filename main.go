@@ -16,16 +16,12 @@
 // With --print-subscriptions it prints the Subscriptions its Channel should
 // have, for `cub channel create ... --subscriptions -`.
 //
-// `argobot install --controller argo|flux|sveltos` prints argobot's Kubernetes
-// deployment for that controller, for `kubectl apply -f -`.
-//
 // `argobot docgen env` prints argobot's environment variables as a JSON Schema.
 package main
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -39,16 +35,6 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "install" {
-		if err := runInstall(os.Args[2:], os.Stdout); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				return
-			}
-			log.Fatalf("[FATAL] %v", err)
-		}
-		return
-	}
-
 	if len(os.Args) > 1 && os.Args[1] == "docgen" {
 		if err := runDocgen(os.Args[2:], os.Stdout); err != nil {
 			log.Fatalf("[FATAL] %v", err)
