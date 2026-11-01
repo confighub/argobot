@@ -7,20 +7,6 @@ resources:
   - serviceaccount.yaml
   - clusterrole-read.yaml
   - deployment.yaml
-# argobot's environment, but for its key, as an AppConfig/Env file. Each
-# controller component merges its own variables in. The installer uploads the
-# ConfigMap as an AppConfig Unit that ConfigHub renders into it; with no name
-# suffix, ConfigHub renders it in place, under this name, which the Deployment
-# reads with envFrom.
-configMapGenerator:
-  - name: argobot-env
-    namespace: confighubplaceholder
-    envs:
-      - argobot.env
-    options:
-      disableNameSuffixHash: true
-      annotations:
-        confighub.com/toolchain: AppConfig/Env
 # Override with installer setup --set-image ghcr.io/confighub/argobot=<image>.
 images:
   - name: ghcr.io/confighub/argobot

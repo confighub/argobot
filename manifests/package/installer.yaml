@@ -74,15 +74,6 @@ spec:
       description: |
         The ConfigHub server argobot connects to.
 
-  validation:
-    envSchema: validation/env.schema.json
-    howToRegenerate: |
-      From the root of the argobot repository:
-
-        go run . docgen env > manifests/package/validation/env.schema.json
-
-      scripts/test-package.sh fails when the committed schema differs.
-
   transformers:
     # The base's resources are in confighubplaceholder. Naming it as the old
     # namespace leaves resources in any other namespace where they are: the
@@ -97,15 +88,15 @@ spec:
             - "{{ .Namespace }}"
             - confighubplaceholder
             - lib.projectsveltos.io/v1beta1/HealthCheck,lib.projectsveltos.io/v1beta1/ClusterHealthCheck
-    - toolchain: AppConfig/Env
+    - toolchain: Kubernetes/YAML
       description: Connect argobot to ConfigHub.
       invocations:
-        - name: set-string-path
-          args: [Argobot, CONFIGHUB_URL, "{{ or .Inputs.confighub_url \"confighubplaceholder\" }}"]
-        - name: set-string-path
-          args: [Argobot, CONFIGHUB_CHANNEL, "{{ or .Inputs.channel \"confighubplaceholder\" }}"]
-        - name: set-string-path
-          args: [Argobot, CONFIGHUB_TARGET, "{{ or .Inputs.target \"confighubplaceholder\" }}"]
+        - name: set-env
+          args:
+            - argobot
+            - "CONFIGHUB_URL={{ or .Inputs.confighub_url \"confighubplaceholder\" }}"
+            - "CONFIGHUB_CHANNEL={{ or .Inputs.channel \"confighubplaceholder\" }}"
+            - "CONFIGHUB_TARGET={{ or .Inputs.target \"confighubplaceholder\" }}"
 
   validators:
     - toolchain: Kubernetes/YAML
@@ -120,9 +111,3 @@ spec:
           args: ['{"DenyRegexp": "(:latest$)|^([^/]+/)*[^/:@]+$"}']
         - name: vet-pod-security-standard
           args: [restricted]
-    - toolchain: AppConfig/Env
-      description: argobot's environment has only the variables argobot reads, with values it accepts.
-      invocations:
-        - name: vet-jsonschema
-          args:
-            - '{"Argobot": {{ loadJSON "validation/env.schema.json" }} }'
