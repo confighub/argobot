@@ -99,7 +99,7 @@ jobs:
     env:
       PACKAGE_DIR: manifests/package
       PACKAGE_REPO: ghcr.io/confighub/packages/argobot
-      INSTALLER_VERSION: v0.3.0
+      INSTALLER_VERSION: v0.3.2
     steps:
       - uses: actions/checkout@v7
 
