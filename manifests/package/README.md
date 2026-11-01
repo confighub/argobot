@@ -6,34 +6,28 @@ The base holds what argobot needs under every GitOps controller:
 - its Namespace (Pod Security Standards restricted)
 - its ServiceAccount
 - cluster-wide read-only access, without Secrets
-- the Deployment, at a pinned image tag, reading its key from the `argobot-secrets` Secret, which is not part of the package
-- argobot's environment, but for its key: the `argobot-env` ConfigMap, generated from `bases/default/argobot.env`
+- the Deployment, at a pinned image tag, with argobot's environment in its `env`, reading its key from the `argobot-secrets` Secret, which is not part of the package
 
 Select one controller component with it:
 
 | Component | Adds |
 |---|---|
-| `argocd` (default) | A Role and RoleBinding in `argocd`, read access to `argoproj.io`, its variables, `GITOPS_CONTROLLER=argocd` among them (`argocd.env`) |
-| `flux` | A ClusterRole to patch OCIRepositories, read access to the Flux source and kustomize groups, its variables, `GITOPS_CONTROLLER=flux` among them (`flux.env`) |
-| `sveltos` | A ClusterRole to patch profiles, read access to the Sveltos groups, the HealthCheck and ClusterHealthCheck that live status reads, its variables, `GITOPS_CONTROLLER=sveltos` among them (`sveltos.env`) |
+| `argocd` (default) | A Role and RoleBinding in `argocd`, read access to `argoproj.io`, and its variables: `GITOPS_CONTROLLER=argocd`, `ARGO_NAMESPACE`, `ARGO_REFRESH_TYPE` |
+| `flux` | A ClusterRole to patch OCIRepositories, read access to the Flux source and kustomize groups, and `GITOPS_CONTROLLER=flux` |
+| `sveltos` | A ClusterRole to patch profiles, read access to the Sveltos groups, the HealthCheck and ClusterHealthCheck that live status reads, and `GITOPS_CONTROLLER=sveltos` |
 
 They form the required `controller` group: selecting two fails, and selecting none installs `argocd`. A render fails validation if:
 - the image is `:latest` or untagged
 - the pod doesn't meet the Pod Security Standards restricted level
-- argobot's environment has a variable argobot doesn't read, or a value it doesn't accept, by the schema in `validation/env.schema.json`
 
 ### argobot's environment
 
-`argobot-env` is an AppConfig/Env file carried in a ConfigMap: each component's `.env` file merges into the base's. `installer upload` makes it an AppConfig Unit, which ConfigHub renders into the ConfigMap, so you change argobot's environment by editing that Unit, for example:
+argobot's variables are in its Deployment's `env`, as in the plain deployments in [`manifests/`](..): the base sets the ones every controller reads, and each controller component adds its own with a patch. Change one in ConfigHub with `set-env`, for example:
 
 ```sh
-cub function do --space argobot-my-cluster --unit argobot-env --toolchain AppConfig/Env \
-  set-string-path Argobot ARGO_REFRESH_TYPE normal
+cub function do --space argobot-my-cluster --unit argobot \
+  set-env argobot ARGO_REFRESH_TYPE=normal
 ```
-
-The ConfigMap has no name suffix (`disableNameSuffixHash`), so ConfigHub renders it in place under the name the Deployment reads. It also fills in the Deployment's `confighub.com/Hash` annotation with the ConfigMap's hash, so a change rolls the pods.
-
-`validation/env.schema.json` is what `argobot docgen env` prints; `scripts/test-package.sh` fails when it differs.
 
 ## Install
 
@@ -67,24 +61,22 @@ To run another image, such as a mirror's copy, pass `--set-image ghcr.io/configh
 
 ### As a base for variants
 
-Every input is optional, so one install can be the base that each cluster's variant is cloned from. Leave `channel` and `target` unset, and set them in each variant's `argobot-env` Unit:
+Every input is optional, so one install can be the base that each cluster's variant is cloned from. Leave `channel` and `target` unset, and set them in each variant's `argobot` Unit, which holds the Deployment:
 
 ```sh
 installer setup --pull oci://ghcr.io/confighub/packages/argobot:0.2.5 \
   --work-dir argobot-base --namespace argobot
 installer upload --work-dir argobot-base --space argobot-base
 cub variant create --target my-cluster/target my-cluster argobot-base
-cub function do --space argobot-my-cluster --unit argobot-env --toolchain AppConfig/Env \
-  set-string-path Argobot CONFIGHUB_CHANNEL my-cluster/argobot
-cub function do --space argobot-my-cluster --unit argobot-env --toolchain AppConfig/Env \
-  set-string-path Argobot CONFIGHUB_TARGET my-cluster/target
+cub function do --space argobot-my-cluster --unit argobot \
+  set-env argobot CONFIGHUB_CHANNEL=my-cluster/argobot CONFIGHUB_TARGET=my-cluster/target
 ```
 
 `cub cluster attach --k8sbot-installer` installs argobot this way.
 
 ## Testing
 
-`scripts/test-package.sh` renders the package for each controller and preset with `installer setup`, running its validators, and checks the renders it has to refuse. It needs installer 0.3.0 or later (or `$INSTALLER`), kustomize and yq, and no ConfigHub server. The `package` workflow runs it on every change.
+`scripts/test-package.sh` renders the package for each controller and preset with `installer setup`, running its validators, and checks the renders it has to refuse. It also checks that each controller's Deployment has the environment of its plain deployment in `manifests/`. It needs installer 0.3.0 or later (or `$INSTALLER`) and yq, and no ConfigHub server. The `package` workflow runs it on every change.
 
 ## Publishing
 

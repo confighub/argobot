@@ -1,8 +1,8 @@
 # Copyright (C) ConfigHub, Inc.
 # SPDX-License-Identifier: MIT
 #
-# Its environment is the argobot-env ConfigMap, made from argobot.env and the
-# controller component's env file.
+# Its environment is the plain deployments' in manifests/, but for the
+# controller's variables, which the controller component adds.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -19,8 +19,6 @@ spec:
     metadata:
       labels:
         app: argobot
-      annotations:
-        confighub.com/Hash: confighubplaceholder
     spec:
       serviceAccountName: argobot
       # Meets the Pod Security Standards "restricted" level. The image runs as
@@ -35,13 +33,11 @@ spec:
       containers:
         - name: argobot
           image: ghcr.io/confighub/argobot:v0.2.8
-          # argobot-env holds every variable but the key. ConfigHub sets
-          # confighub.com/Hash below to the ConfigMap's content hash, so a
-          # change to it rolls the pods.
-          envFrom:
-            - configMapRef:
-                name: argobot-env
           env:
+            # The ConfigHub server argobot connects to. The confighub_url input
+            # sets it.
+            - name: CONFIGHUB_URL
+              value: "https://hub.confighub.com"
             # The service account key argobot authenticates with: a private
             # JWK, as `cub serviceaccount key add --generate` writes it. The
             # Secret is not part of the package: create it in the install
@@ -51,6 +47,14 @@ spec:
                 secretKeyRef:
                   name: argobot-secrets
                   key: CONFIGHUB_AUTH_PRIVATE_KEY
+            # The Channel argobot claims, as <space>/<slug>. The channel input
+            # sets it; each variant of a base sets it for its cluster.
+            - name: CONFIGHUB_CHANNEL
+              value: confighubplaceholder
+            # The Target argobot stores the cluster's facts on, as
+            # <space>/<slug>. The target input sets it.
+            - name: CONFIGHUB_TARGET
+              value: confighubplaceholder
           resources:
             requests:
               cpu: 25m

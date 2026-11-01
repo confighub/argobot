@@ -20,7 +20,7 @@ docker build -t ghcr.io/confighub/argobot:dev .
 ```
 
 Scripts (run from repo root):
-- `scripts/test-package.sh` — renders/validates the installer package in `manifests/package` (needs `installer` ≥0.3.0, `kustomize`, `yq`, `go`). CI runs it.
+- `scripts/test-package.sh` — renders/validates the installer package in `manifests/package` (needs `installer` ≥0.3.0 and `yq`); it also checks each controller's Deployment env against its plain manifest. CI runs it.
 - `scripts/set-version.sh vX.Y.Z` — bumps the image tag in all three manifests and the package; `--check` verifies. Release = run this, merge, then push the `vX.Y.Z` tag (`release.yml` fails otherwise).
 - `scripts/gen-third-party-licenses.sh` — regenerate and commit `THIRD_PARTY_LICENSES.txt` after any dependency change; CI fails if stale or if a copyleft dep is linked.
 - `scripts/verify-no-personal-names.sh` — CI check. Prose says "the team"/"a colleague" or an issue number, never a person's name; use `$HOME` and `user@example.com` in examples.
@@ -43,8 +43,7 @@ Two seams carry the controller switch:
 ## Configuration coupling
 
 Env vars are declared once in `envVars` (`config.go`) with `env`/`json`/`default`/`enum`/`description` tags; `loadConfig` applies defaults itself (an empty var equals unset). Adding or changing a variable requires updating, together:
-- `manifests/package/validation/env.schema.json` — regenerate with `go run . docgen env > manifests/package/validation/env.schema.json` (`test-package.sh` diffs it).
-- The `env` list in the relevant `manifests/{argobot,flux/argobot,sveltos/argobot}.yaml` (each lists **every** supported variable) and the package's `bases/default/argobot.env` or `components/<controller>/*.env`.
+- The `env` list in the relevant `manifests/{argobot,flux/argobot,sveltos/argobot}.yaml` (each lists **every** supported variable) and, for a variable they set, the package's `bases/default/deployment.yaml` or the env patch in `components/<controller>/kustomization.yaml` (`test-package.sh` compares them).
 - The README configuration table.
 
 Removed variables go in `retiredEnv` (warned about, not silently ignored).
