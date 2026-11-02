@@ -116,7 +116,7 @@ func main() {
 // client authenticates once here, so a bad key fails the start, and renews its
 // session on a 401 for as long as the process runs.
 func newHubClient(ctx context.Context, cfg config) (*cubapi.Client, error) {
-	signer, err := cubapi.NewAssertionSigner([]byte(cfg.PrivateKey), "", cfg.AssertionAudience)
+	signer, err := cubapi.NewAssertionSigner([]byte(cfg.PrivateKey), "", "")
 	if err != nil {
 		return nil, fmt.Errorf("CONFIGHUB_AUTH_PRIVATE_KEY: %w", err)
 	}

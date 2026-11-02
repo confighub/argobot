@@ -41,7 +41,6 @@
 #     secretRef:
 #       name: confighub-oci         # kubernetes.io/dockerconfigjson; username
 #                                   # "token" and password a ConfigHub token
-#                                   # (or a worker ID and its secret)
 #     # insecure: true              # only for a plain-HTTP gateway
 #   ---
 #   apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -202,9 +201,6 @@ spec:
                 secretKeyRef:
                   name: argobot-secrets
                   key: CONFIGHUB_AUTH_PRIVATE_KEY
-            # Only for a server whose CONFIGHUB_ASSERTION_AUDIENCE is not the default.
-            # - name: CONFIGHUB_ASSERTION_AUDIENCE
-            #   value: ""
 
             # ── Controller ───────────────────────────────────────────────────
             # "flux" forces a reconciliation by patching the OCIRepository's
