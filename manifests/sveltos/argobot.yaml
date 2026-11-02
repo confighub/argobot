@@ -256,9 +256,6 @@ spec:
                 secretKeyRef:
                   name: argobot-secrets
                   key: CONFIGHUB_AUTH_PRIVATE_KEY
-            # Only for a server whose CONFIGHUB_ASSERTION_AUDIENCE is not the default.
-            # - name: CONFIGHUB_ASSERTION_AUDIENCE
-            #   value: ""
 
             # ── Controller ───────────────────────────────────────────────────
             # "sveltos" forces a redeploy by patching the profile's

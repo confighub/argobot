@@ -80,7 +80,6 @@ All configuration is via environment variables:
 | `CONFIGHUB_AUTH_PRIVATE_KEY` | yes | The service account key argobot authenticates with, as a private JWK (the file `cub serviceaccount key add --generate` writes) |
 | `CONFIGHUB_CHANNEL` | yes | The Channel argobot claims and polls, as `<space>/<slug>` or a UUID |
 | `CONFIGHUB_TARGET` | no | The Target that represents the cluster, as `<space>/<slug>` or a UUID. When set, argobot stores facts about the cluster on it at startup; see [Cluster facts](#cluster-facts). Needs Edit on the Target. |
-| `CONFIGHUB_ASSERTION_AUDIENCE` | no | Only for a ConfigHub server that sets `CONFIGHUB_ASSERTION_AUDIENCE` to something other than its default; must match it. |
 | `GITOPS_CONTROLLER` | no | `argocd` (default), `sveltos` or `flux`. See [Sveltos](#sveltos) and [Flux](#flux). Every `ARGO_*` variable below applies to `argocd` only. |
 | `FLUX_NAMESPACE` | no | _flux only._ Namespace of the OCIRepository named after a Space, tried when listing OCIRepositories fails. Defaults to `flux-system`. |
 | `ARGO_NAMESPACE` | no | Namespace holding the Argo CD Application resources. Defaults to `argocd`. |
@@ -92,7 +91,7 @@ An empty variable is the same as an unset one. `argobot docgen env` prints these
 
 When `GITOPS_CONTROLLER` is unset, argobot drives Argo CD. It needs no Argo CD credentials: it uses the in-cluster ServiceAccount (or a local kubeconfig when run out of cluster).
 
-Which events argobot receives is not configured here. It is the Channel's `Subscriptions`, set with `cub channel create --subscriptions` or `cub channel update`. The variables an earlier argobot read as a worker (`CONFIGHUB_WORKER_ID`, `CONFIGHUB_WORKER_SECRET`, and the subscription scope `CONFIGHUB_SUBSCRIPTION_NAME`, `CONFIGHUB_EVENT_SPACE_ID`, `CONFIGHUB_EVENT_TARGET_ID`) are ignored with a warning, as are those of the retired Argo CD REST sync mode (`ARGO_SYNC_MODE`, `ARGOCD_SERVER`, `ARGOCD_AUTH_TOKEN`, `ARGOCD_INSECURE`, `ARGO_APP_NAMESPACE`, `ARGO_PRUNE`, `ARGO_FORCE`). argobot now always syncs through the Kubernetes API, which deploys only when the Application has auto-sync enabled.
+Which events argobot receives is not configured here. It is the Channel's `Subscriptions`, set with `cub channel create --subscriptions` or `cub channel update`. The variables an earlier argobot read for its subscription scope (`CONFIGHUB_SUBSCRIPTION_NAME`, `CONFIGHUB_EVENT_SPACE_ID`, `CONFIGHUB_EVENT_TARGET_ID`) and its assertion audience (`CONFIGHUB_ASSERTION_AUDIENCE`) are ignored with a warning, as are those of the retired Argo CD REST sync mode (`ARGO_SYNC_MODE`, `ARGOCD_SERVER`, `ARGOCD_AUTH_TOKEN`, `ARGOCD_INSECURE`, `ARGO_APP_NAMESPACE`, `ARGO_PRUNE`, `ARGO_FORCE`). argobot now always syncs through the Kubernetes API, which deploys only when the Application has auto-sync enabled.
 
 ## Setup
 
