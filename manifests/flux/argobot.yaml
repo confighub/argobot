@@ -41,7 +41,6 @@
 #     secretRef:
 #       name: confighub-oci         # kubernetes.io/dockerconfigjson; username
 #                                   # "token" and password a ConfigHub token
-#                                   # (or a worker ID and its secret)
 #     # insecure: true              # only for a plain-HTTP gateway
 #   ---
 #   apiVersion: kustomize.toolkit.fluxcd.io/v1
