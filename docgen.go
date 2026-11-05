@@ -12,7 +12,8 @@ import (
 )
 
 // runDocgen implements `argobot docgen env`: it writes argobot's environment
-// variables as a JSON Schema.
+// variables as a JSON Schema, which the installer package validates its
+// argobot-env ConfigMap against.
 func runDocgen(args []string, out io.Writer) error {
 	if len(args) != 1 || args[0] != "env" {
 		return fmt.Errorf("usage: argobot docgen env")

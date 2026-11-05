@@ -91,12 +91,12 @@ spec:
     - toolchain: Kubernetes/YAML
       description: Connect argobot to ConfigHub.
       invocations:
-        - name: set-env
-          args:
-            - argobot
-            - "CONFIGHUB_URL={{ or .Inputs.confighub_url \"confighubplaceholder\" }}"
-            - "CONFIGHUB_CHANNEL={{ or .Inputs.channel \"confighubplaceholder\" }}"
-            - "CONFIGHUB_TARGET={{ or .Inputs.target \"confighubplaceholder\" }}"
+        - name: set-string-path
+          args: [v1/ConfigMap, data.CONFIGHUB_URL, "{{ or .Inputs.confighub_url \"confighubplaceholder\" }}"]
+        - name: set-string-path
+          args: [v1/ConfigMap, data.CONFIGHUB_CHANNEL, "{{ or .Inputs.channel \"confighubplaceholder\" }}"]
+        - name: set-string-path
+          args: [v1/ConfigMap, data.CONFIGHUB_TARGET, "{{ or .Inputs.target \"confighubplaceholder\" }}"]
 
   validators:
     - toolchain: Kubernetes/YAML
@@ -111,3 +111,10 @@ spec:
           args: ['{"DenyRegexp": "(:latest$)|^([^/]+/)*[^/:@]+$"}']
         - name: vet-pod-security-standard
           args: [restricted]
+        # argobot-env, the package's only ConfigMap, has only the variables
+        # argobot reads, with values it accepts, and never its key, which
+        # belongs in the argobot-secrets Secret. The schema is `argobot docgen
+        # env`.
+        - name: vet-jsonschema
+          args:
+            - '{"v1/ConfigMap": {"properties": {"data": {"allOf": [{{ loadJSON "validation/env.schema.json" }}, {"not": {"required": ["CONFIGHUB_AUTH_PRIVATE_KEY"]}}]}}}}'
