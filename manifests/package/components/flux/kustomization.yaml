@@ -4,24 +4,15 @@ apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources:
   - clusterrole.yaml
+# Drive Flux, as manifests/flux/argobot.yaml does, merged into the base's
+# variables.
+configMapGenerator:
+  - name: argobot-env
+    namespace: confighubplaceholder
+    behavior: merge
+    envs:
+      - flux.env
 patches:
-  # Drive Flux, as manifests/flux/argobot.yaml does.
-  - target:
-      kind: Deployment
-      name: argobot
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: argobot
-      spec:
-        template:
-          spec:
-            containers:
-              - name: argobot
-                env:
-                  - name: GITOPS_CONTROLLER
-                    value: flux
   # Read OCIRepositories and Kustomizations, for live status.
   - target:
       kind: ClusterRole

@@ -7,6 +7,17 @@ resources:
   - serviceaccount.yaml
   - clusterrole-read.yaml
   - deployment.yaml
+# argobot's environment, but for its key, which the Deployment reads with
+# envFrom. Each controller component merges its own variables in. With no name
+# suffix, the ConfigMap keeps its name, and a change to it is uploaded in place;
+# upload links the Deployment to it so that the pods roll when it changes.
+configMapGenerator:
+  - name: argobot-env
+    namespace: confighubplaceholder
+    envs:
+      - argobot.env
+    options:
+      disableNameSuffixHash: true
 # Override with installer setup --set-image ghcr.io/confighub/argobot=<image>.
 images:
   - name: ghcr.io/confighub/argobot

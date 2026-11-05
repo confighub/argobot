@@ -5,11 +5,12 @@
 # Renders the installer package in manifests/package the way an operator
 # would, with `installer setup`, for each controller and preset, and checks the
 # renders it has to refuse. The package's validators (vet-schemas, vet-images,
-# vet-pod-security-standard, ...) run in every render. It also checks that the
-# plain manifests run the same release as the package, with the same
-# environment.
+# vet-pod-security-standard, vet-jsonschema of argobot's environment, ...) run
+# in every render. It also checks that validation/env.schema.json is what
+# `argobot docgen env` prints, and that the plain manifests run the same
+# release as the package, with the same environment.
 #
-# Needs installer 0.3.0 or later (or $INSTALLER) and yq on PATH, and no
+# Needs installer 0.3.0 or later (or $INSTALLER), yq and go on PATH, and no
 # ConfigHub server.
 #
 # Usage: scripts/test-package.sh
@@ -37,24 +38,44 @@ tag="$(yq -r '.images[] | select(.name == "ghcr.io/confighub/argobot") | .newTag
 [ "v${version}" = "$tag" ] || fail "installerMetadata.version is ${version}, but the package runs argobot ${tag}"
 "${repo}/scripts/set-version.sh" --check "$tag" >/dev/null || fail "the deployments in manifests/ don't all run argobot ${tag}"
 
-# render <case> <installer setup args...> renders the package.
+# The schema the package validates argobot's environment against is generated.
+if ! (cd "$repo" && go run . docgen env) | diff -u "${pkg}/validation/env.schema.json" - >&2; then
+  fail "validation/env.schema.json is stale; regenerate it with: go run . docgen env > manifests/package/validation/env.schema.json"
+fi
+
+# render <case> <installer setup args...> renders the package; RENDER_PKG
+# renders another copy of it.
 render() {
   local name=$1
   shift
-  "$installer" setup --pull "$pkg" --work-dir "${work}/${name}" "${common[@]}" "$@" \
+  "$installer" setup --pull "${RENDER_PKG:-$pkg}" --work-dir "${work}/${name}" "${common[@]}" "$@" \
     > "${work}/${name}.log" 2>&1
 }
 
-# env_of <case> <variable>: the variable's value in argobot's environment.
+# env_of <case> <variable>: the variable's value in argobot's environment, the
+# argobot-env ConfigMap.
 env_of() {
-  yq -r ".spec.template.spec.containers[0].env[] | select(.name == \"$2\") | .value" \
-    "${work}/$1/out/manifests/deployment-argobot-argobot.yaml"
+  yq -r ".data.$2 // \"\"" "${work}/$1/out/manifests/configmap-argobot-argobot-env.yaml"
 }
 
 # env_list <file>: the environment of the argobot Deployment in file, sorted
-# by name, one variable per line.
+# by name, one variable per line. The Deployment's env comes with the data of
+# the ConfigMaps in file, which is where the package's Deployment reads its
+# variables but for the key from.
 env_list() {
-  yq -o json -I 0 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env | sort_by(.name) | .[] | sort_keys(..)' "$1"
+  yq -o json -I 0 '
+    (select(.kind == "Deployment") | .spec.template.spec.containers[0].env[]),
+    (select(.kind == "ConfigMap") | .data | to_entries[] | {"name": .key, "value": .value})' "$@" |
+    jq -cS -s 'sort_by(.name)[]'
+}
+
+# broken_copy <name> <line>: a copy of the package whose argobot.env has line
+# added, for a render that has to be refused.
+broken_copy() {
+  local copy="${work}/pkg-$1"
+  cp -R "$pkg" "$copy"
+  printf '%s\n' "$2" >> "${copy}/bases/default/argobot.env"
+  echo "$copy"
 }
 
 # expect_render <case> <controller> <installer setup args...>: the render
@@ -121,8 +142,9 @@ done
 expect_render flux-base flux --select flux
 expect_render sveltos-base sveltos --select sveltos
 for case in base:argobot.yaml flux-base:flux/argobot.yaml sveltos-base:sveltos/argobot.yaml; do
+  out="${work}/${case%%:*}/out/manifests"
   if ! diff -u <(env_list "${repo}/manifests/${case#*:}") \
-    <(env_list "${work}/${case%%:*}/out/manifests/deployment-argobot-argobot.yaml") >&2; then
+    <(env_list "${out}/deployment-argobot-argobot.yaml" "${out}/configmap-argobot-argobot-env.yaml") >&2; then
     fail "${case%%:*}: the environment differs from manifests/${case#*:}"
   fi
 done
@@ -134,6 +156,12 @@ done
 expect_refusal two-controllers 'are alternatives in group "controller"' --select argocd --select flux
 expect_refusal latest-image vet-images \
   --set-image ghcr.io/confighub/argobot=ghcr.io/confighub/argobot:latest
+RENDER_PKG="$(broken_copy misspelled GITOPS_CONTROLER=flux)" \
+  expect_refusal misspelled-variable "GITOPS_CONTROLER"
+RENDER_PKG="$(broken_copy bad-value CONFIGHUB_REPORT_LIVE_STATUS=maybe)" \
+  expect_refusal bad-value "CONFIGHUB_REPORT_LIVE_STATUS"
+RENDER_PKG="$(broken_copy key-in-configmap CONFIGHUB_AUTH_PRIVATE_KEY=x)" \
+  expect_refusal key-in-configmap "vet-jsonschema"
 
 if [ "$failures" -gt 0 ]; then
   echo "${failures} check(s) failed" >&2
