@@ -90,7 +90,7 @@ func newFluxReporter(_ config, hub *cubapi.Client) (*fluxReporter, error) {
 	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 		dyn, liveStatusResync, metav1.NamespaceAll, nil)
 	r := &fluxReporter{
-		releaseLookup:  newReleaseLookup(liveStatusWriter{api: hub.API}),
+		releaseLookup:  releaseLookup{liveStatusWriter{api: hub.API}},
 		sources:        factory.ForResource(flux.OCIRepositoriesGVR).Informer(),
 		kustomizations: factory.ForResource(flux.KustomizationsGVR).Informer(),
 		queue:          workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),

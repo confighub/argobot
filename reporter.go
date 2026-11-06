@@ -98,21 +98,15 @@ type liveStatusWriter struct {
 // releaseLookup finds the Release a controller is running from the deployment
 // Space's slug and the manifest digest the controller reports, as Argo CD and
 // Flux both do. It embeds the liveStatusWriter that writes to that Release.
+//
+// Neither lookup is cached. A Space deleted and created again with the same slug
+// has a new id, and publishing from an existing Tag, as a rollback does, makes a
+// new Release with the same manifest digest as the one the Tag was first
+// published as; a cached answer would name the deleted Space or the older
+// Release. Each lookup is a small metadata query, and a report runs only when
+// an object changes or the informer resyncs.
 type releaseLookup struct {
 	liveStatusWriter
-
-	// releaseIDs caches resolved Space and manifest digest -> Release id lookups,
-	// which a Release's immutable content makes safe to keep. Touched only by the
-	// single worker goroutine, so it needs no lock. Space slugs are not cached:
-	// a Space deleted and created again with the same slug has a new id.
-	releaseIDs map[string]uuid.UUID
-}
-
-func newReleaseLookup(writer liveStatusWriter) releaseLookup {
-	return releaseLookup{
-		liveStatusWriter: writer,
-		releaseIDs:       make(map[string]uuid.UUID),
-	}
 }
 
 // newArgoReporter builds the Argo CD live-status reporter: a dynamic Kubernetes
@@ -131,7 +125,7 @@ func newArgoReporter(cfg config, hub *cubapi.Client) (*reporter, error) {
 	informer := factory.ForResource(kube.ApplicationsGVR).Informer()
 
 	r := &reporter{
-		releaseLookup: newReleaseLookup(liveStatusWriter{api: hub.API}),
+		releaseLookup: releaseLookup{liveStatusWriter{api: hub.API}},
 		namespace:     cfg.ArgoNamespace,
 		informer:      informer,
 		queue:         workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
@@ -275,10 +269,6 @@ func (r *reporter) report(ctx context.Context, key string) error {
 // Spaces it reports on, so a slug that resolves is one it is responsible for. A
 // slug that does not resolve (not found, or a Space it cannot see) is treated as
 // not-ours and skipped; a failure to ask is an error, so the report is retried.
-//
-// The id is looked up on every report rather than cached: a Space can be deleted
-// and created again with the same slug, and a cached id would then name a Space
-// that no longer exists.
 func (r *releaseLookup) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool, error) {
 	if slug == "" {
 		return uuid.Nil, false, nil
@@ -303,14 +293,10 @@ func (r *releaseLookup) getSpaceID(ctx context.Context, slug string) (uuid.UUID,
 }
 
 // getReleaseID resolves the Release of the Space whose ManifestDigest is the
-// revision Argo synced: the newest, should a republish of the same content have
-// made more than one. Hits are cached; a miss is not, since the Release may not
-// be listed yet.
+// revision Argo synced: the newest, since publishing from an existing Tag makes
+// a new Release with the digest of an earlier one. A Release deleted since Argo
+// synced it is not known.
 func (r *releaseLookup) getReleaseID(ctx context.Context, spaceID uuid.UUID, manifestDigest string) (uuid.UUID, bool, error) {
-	cacheKey := spaceID.String() + "/" + manifestDigest
-	if id, ok := r.releaseIDs[cacheKey]; ok {
-		return id, true, nil
-	}
 	where := fmt.Sprintf("ManifestDigest = '%s'", manifestDigest)
 	selectFields := "ReleaseID,ReleaseNum,SpaceID,OrganizationID"
 	resp, err := r.api.ListExtendedReleasesWithResponse(ctx, spaceID,
@@ -331,7 +317,6 @@ func (r *releaseLookup) getReleaseID(ctx context.Context, spaceID uuid.UUID, man
 	if newest == nil {
 		return uuid.Nil, false, nil
 	}
-	r.releaseIDs[cacheKey] = newest.ReleaseID
 	return newest.ReleaseID, true, nil
 }
 
