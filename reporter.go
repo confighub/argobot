@@ -101,18 +101,16 @@ type liveStatusWriter struct {
 type releaseLookup struct {
 	liveStatusWriter
 
-	// spaceIDs caches resolved deployment-Space slug -> id lookups, and
-	// releaseIDs resolved Space and manifest digest -> Release id lookups, which a
-	// Release's immutable content makes safe to keep. Touched only by the single
-	// worker goroutine, so they need no lock.
-	spaceIDs   map[string]uuid.UUID
+	// releaseIDs caches resolved Space and manifest digest -> Release id lookups,
+	// which a Release's immutable content makes safe to keep. Touched only by the
+	// single worker goroutine, so it needs no lock. Space slugs are not cached:
+	// a Space deleted and created again with the same slug has a new id.
 	releaseIDs map[string]uuid.UUID
 }
 
 func newReleaseLookup(writer liveStatusWriter) releaseLookup {
 	return releaseLookup{
 		liveStatusWriter: writer,
-		spaceIDs:         make(map[string]uuid.UUID),
 		releaseIDs:       make(map[string]uuid.UUID),
 	}
 }
@@ -226,7 +224,10 @@ func (r *reporter) report(ctx context.Context, key string) error {
 	}
 
 	slug := deploymentSpaceSlug(u)
-	spaceID, known := r.getSpaceID(ctx, slug)
+	spaceID, known, err := r.getSpaceID(ctx, slug)
+	if err != nil {
+		return err
+	}
 	if !known {
 		// Slug did not resolve to a Space argobot can see -- not ours.
 		return nil
@@ -269,38 +270,36 @@ func (r *reporter) report(ctx context.Context, key string) error {
 	return nil
 }
 
-// getSpaceID resolves a deployment Space slug to its id, caching hits. argobot
-// can read the Spaces that release to the Target it is granted on, which are the
-// deployment Spaces it reports on, so a slug that resolves is one it is
-// responsible for. A slug that does not resolve (not found, or a Space it cannot
-// see) is treated as not-ours and skipped.
-func (r *releaseLookup) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool) {
+// getSpaceID resolves a deployment Space slug to its id. argobot can read the
+// Spaces that release to the Target it is granted on, which are the deployment
+// Spaces it reports on, so a slug that resolves is one it is responsible for. A
+// slug that does not resolve (not found, or a Space it cannot see) is treated as
+// not-ours and skipped; a failure to ask is an error, so the report is retried.
+//
+// The id is looked up on every report rather than cached: a Space can be deleted
+// and created again with the same slug, and a cached id would then name a Space
+// that no longer exists.
+func (r *releaseLookup) getSpaceID(ctx context.Context, slug string) (uuid.UUID, bool, error) {
 	if slug == "" {
-		return uuid.Nil, false
-	}
-	if id, ok := r.spaceIDs[slug]; ok {
-		return id, true
+		return uuid.Nil, false, nil
 	}
 
 	where := fmt.Sprintf("Slug = '%s'", slug)
 	resp, err := r.api.ListSpacesWithResponse(ctx, &goclientnew.ListSpacesParams{Where: &where})
 	if err != nil {
-		log.Printf("[WARN] live-status reporter: resolve space %q: %v", slug, err)
-		return uuid.Nil, false
+		return uuid.Nil, false, fmt.Errorf("resolve space %q: %w", slug, err)
 	}
 	if resp.JSON200 == nil {
-		log.Printf("[WARN] live-status reporter: resolve space %q: unexpected HTTP %d: %s",
+		return uuid.Nil, false, fmt.Errorf("resolve space %q: unexpected HTTP %d: %s",
 			slug, resp.HTTPResponse.StatusCode, string(resp.Body))
-		return uuid.Nil, false
 	}
 
 	for _, es := range *resp.JSON200 {
 		if es.Space != nil && es.Space.Slug == slug {
-			r.spaceIDs[slug] = es.Space.SpaceID
-			return es.Space.SpaceID, true
+			return es.Space.SpaceID, true, nil
 		}
 	}
-	return uuid.Nil, false
+	return uuid.Nil, false, nil
 }
 
 // getReleaseID resolves the Release of the Space whose ManifestDigest is the

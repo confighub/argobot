@@ -206,7 +206,10 @@ func (r *fluxReporter) report(ctx context.Context, key string) error {
 	if slug == "" {
 		slug = source.GetName()
 	}
-	spaceID, known := r.getSpaceID(ctx, slug)
+	spaceID, known, err := r.getSpaceID(ctx, slug)
+	if err != nil {
+		return err
+	}
 	if !known {
 		// Slug did not resolve to a Space argobot can see -- not ours.
 		return nil
