@@ -90,7 +90,7 @@ func newFluxReporter(_ config, hub *cubapi.Client) (*fluxReporter, error) {
 	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 		dyn, liveStatusResync, metav1.NamespaceAll, nil)
 	r := &fluxReporter{
-		releaseLookup:  newReleaseLookup(liveStatusWriter{api: hub.API}),
+		releaseLookup:  releaseLookup{liveStatusWriter{api: hub.API}},
 		sources:        factory.ForResource(flux.OCIRepositoriesGVR).Informer(),
 		kustomizations: factory.ForResource(flux.KustomizationsGVR).Informer(),
 		queue:          workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
@@ -206,7 +206,10 @@ func (r *fluxReporter) report(ctx context.Context, key string) error {
 	if slug == "" {
 		slug = source.GetName()
 	}
-	spaceID, known := r.getSpaceID(ctx, slug)
+	spaceID, known, err := r.getSpaceID(ctx, slug)
+	if err != nil {
+		return err
+	}
 	if !known {
 		// Slug did not resolve to a Space argobot can see -- not ours.
 		return nil
