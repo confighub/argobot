@@ -1,10 +1,12 @@
 # Copyright (C) ConfigHub, Inc.
 # SPDX-License-Identifier: MIT
 #
-# Forcing a redeploy: argobot patches the profile.projectsveltos.io/redeploy
-# annotation on the ClusterProfile (cluster-scoped) or Profile (namespaced) that
-# deploys a Space. Sveltos's profiles aren't confined to one namespace, so this is
-# a ClusterRole; it grants nothing beyond reading and patching profiles.
+# Sveltos: argobot patches the profile.projectsveltos.io/redeploy annotation on
+# the ClusterProfile (cluster-scoped) or Profile (namespaced) that deploys a
+# Space to force a redeploy, and lists and watches ClusterSummaries and
+# HealthCheckReports (a remote cluster's reports are collected into the
+# management cluster) to report status. These aren't confined to one namespace,
+# so this is a ClusterRole; it grants nothing beyond those.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -13,6 +15,12 @@ rules:
   - apiGroups: ["config.projectsveltos.io"]
     resources: ["clusterprofiles", "profiles"]
     verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["config.projectsveltos.io"]
+    resources: ["clustersummaries"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["lib.projectsveltos.io"]
+    resources: ["healthcheckreports"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

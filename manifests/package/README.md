@@ -5,16 +5,16 @@ An [installer](https://github.com/confighub/installer) package for argobot, publ
 The base holds what argobot needs under every GitOps controller:
 - its Namespace (Pod Security Standards restricted)
 - its ServiceAccount
-- cluster-wide read-only access, without Secrets
+- `list` on CustomResourceDefinitions, StorageClasses and IngressClasses, for cluster facts
 - the Deployment, at a pinned image tag, with argobot's environment in its `env`, reading its key from the `argobot-secrets` Secret, which is not part of the package
 
 Select one controller component with it:
 
 | Component | Adds |
 |---|---|
-| `argocd` (default) | A Role and RoleBinding in `argocd`, read access to `argoproj.io`, and its variables: `GITOPS_CONTROLLER=argocd`, `ARGO_NAMESPACE`, `ARGO_REFRESH_TYPE` |
-| `flux` | A ClusterRole to patch OCIRepositories, read access to the Flux source and kustomize groups, and `GITOPS_CONTROLLER=flux` |
-| `sveltos` | A ClusterRole to patch profiles, read access to the Sveltos groups, the HealthCheck and ClusterHealthCheck that live status reads, and `GITOPS_CONTROLLER=sveltos` |
+| `argocd` (default) | A Role and RoleBinding in `argocd` to read and patch Applications, and its variables: `GITOPS_CONTROLLER=argocd`, `ARGO_NAMESPACE`, `ARGO_REFRESH_TYPE` |
+| `flux` | A ClusterRole to read and patch OCIRepositories and read Kustomizations, and `GITOPS_CONTROLLER=flux` |
+| `sveltos` | A ClusterRole to read and patch profiles and read ClusterSummaries and HealthCheckReports, the HealthCheck and ClusterHealthCheck that live status reads, and `GITOPS_CONTROLLER=sveltos` |
 
 They form the required `controller` group: selecting two fails, and selecting none installs `argocd`. A render fails validation if:
 - the image is `:latest` or untagged

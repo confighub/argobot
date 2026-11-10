@@ -23,14 +23,3 @@ patches:
                 env:
                   - name: GITOPS_CONTROLLER
                     value: sveltos
-  # Read ClusterSummaries and HealthCheckReports, for live status.
-  - target:
-      kind: ClusterRole
-      name: argobot-read
-    patch: |-
-      - op: add
-        path: /rules/1/apiGroups/-
-        value: config.projectsveltos.io
-      - op: add
-        path: /rules/1/apiGroups/-
-        value: lib.projectsveltos.io
