@@ -39,13 +39,13 @@ Collecting needs Kubernetes discovery and `list` on CustomResourceDefinitions, S
 
 ### Metrics
 
-argobot serves Prometheus counters at `/metrics` on `METRICS_ADDR` (`:9090` by default), each labeled with `controller`:
+argobot records its counters with OpenTelemetry and serves them in the Prometheus text format at `/metrics` on `METRICS_ADDR` (`:9090` by default), through the OpenTelemetry Prometheus exporter. Each is labeled with `controller` (the OpenTelemetry instrument name is in parentheses):
 
-- `argobot_syncs_total` — sync requests to the GitOps controller, one per Application, profile or OCIRepository an event resolved to, by `result`: `success` or `failure`.
-- `argobot_events_unresolved_total` — `release.published` events that resolved to no Application, profile or OCIRepository, so nothing was synced. A steady rise usually means a sync target is misnamed or its OCI URL names a different Space.
-- `argobot_status_reports_total` — live-status passes over one watched object, by `result`: `success` when the object's Release was found (whether or not anything was written, since an unchanged object writes nothing), `skipped` when there was nothing to record on (the object is gone, or names no Space or Release argobot can see), and `failure` when the pass will be retried.
+- `argobot_syncs_total` (`argobot.syncs`) — sync requests to the GitOps controller, one per Application, profile or OCIRepository an event resolved to, by `result`: `success` or `failure`.
+- `argobot_events_unresolved_total` (`argobot.events.unresolved`) — `release.published` events that resolved to no Application, profile or OCIRepository, so nothing was synced. A steady rise usually means a sync target is misnamed or its OCI URL names a different Space.
+- `argobot_status_reports_total` (`argobot.status_reports`) — live-status passes over one watched object, by `result`: `success` when the object's Release was found (whether or not anything was written, since an unchanged object writes nothing), `skipped` when there was nothing to record on (the object is gone, or names no Space or Release argobot can see), and `failure` when the pass will be retried.
 
-A call that fails because argobot is shutting down is not counted as a failure. The counters start at zero with each process. Serving them is best-effort: if the address cannot be opened, argobot warns and goes on without metrics.
+A call that fails because argobot is shutting down is not counted as a failure. Every series is exported from the start, at zero, and the counters restart from zero with each process. `/metrics` holds only these counters: no Go runtime or process metrics, and no OpenTelemetry `target_info`, so the `OTEL_*` resource environment variables have no effect. Serving them is best-effort: if the address cannot be opened, argobot warns and goes on without metrics.
 
 The manifests name the container port `metrics` and set it to 9090. If you change the port in `METRICS_ADDR`, change `containerPort` to match. They include no Service, ServiceMonitor or scrape annotations; add whichever your Prometheus uses to discover targets.
 
