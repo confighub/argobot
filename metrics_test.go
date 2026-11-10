@@ -10,20 +10,75 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"k8s.io/client-go/util/workqueue"
 )
 
-// The counters are package state, so these tests compare differences and must
-// not call t.Parallel.
+// useTestMetrics points the package's counters at a fresh in-memory reader for
+// the duration of the test. The counters are package state, so tests that use
+// it must not call t.Parallel.
+func useTestMetrics(t *testing.T, controller string) *sdkmetric.ManualReader {
+	t.Helper()
+	reader := sdkmetric.NewManualReader()
+	prev := meters
+	if err := setMetrics(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)), controller); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { meters = prev })
+	return reader
+}
+
+// collectCounts returns every counter data point, keyed "name" or
+// "name/result", checking that each carries the controller attribute.
+func collectCounts(t *testing.T, reader *sdkmetric.ManualReader, controller string) map[string]int64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			if !ok || !sum.IsMonotonic {
+				t.Fatalf("%s is %T, want a monotonic int64 sum", m.Name, m.Data)
+			}
+			for _, dp := range sum.DataPoints {
+				if c, _ := dp.Attributes.Value("controller"); c.AsString() != controller {
+					t.Errorf("%s controller = %q, want %q", m.Name, c.AsString(), controller)
+				}
+				key := m.Name
+				if r, ok := dp.Attributes.Value("result"); ok {
+					key += "/" + r.AsString()
+				}
+				counts[key] += dp.Value
+			}
+		}
+	}
+	return counts
+}
+
+func assertCounts(t *testing.T, got, want map[string]int64) {
+	t.Helper()
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("%s = %d, want %d", k, got[k], w)
+		}
+	}
+	for k, g := range got {
+		if _, ok := want[k]; !ok && g != 0 {
+			t.Errorf("%s = %d, want 0", k, g)
+		}
+	}
+}
 
 func TestSyncMetrics(t *testing.T) {
-	successes, failures, unresolved := syncSuccesses.Load(), syncFailures.Load(), unresolvedEvents.Load()
+	reader := useTestMetrics(t, ControllerArgoCD)
 	apps := map[string][]string{"a": {"oci://gw/space/s"}, "b": {"oci://gw/space/s"}}
 	payload := map[string]any{"SpaceSlug": "s"}
 
@@ -36,15 +91,11 @@ func TestSyncMetrics(t *testing.T) {
 	cancel()
 	makeEventHandler(&fakeSyncer{apps: apps, err: context.Canceled}, config{})(cancelled, event(eventTypeReleasePublished, payload))
 
-	if got := syncSuccesses.Load() - successes; got != 2 {
-		t.Errorf("sync successes = %d, want 2", got)
-	}
-	if got := syncFailures.Load() - failures; got != 2 {
-		t.Errorf("sync failures = %d, want 2", got)
-	}
-	if got := unresolvedEvents.Load() - unresolved; got != 1 {
-		t.Errorf("unresolved events = %d, want 1", got)
-	}
+	assertCounts(t, collectCounts(t, reader, ControllerArgoCD), map[string]int64{
+		"argobot.syncs/success":     2,
+		"argobot.syncs/failure":     2,
+		"argobot.events.unresolved": 1,
+	})
 }
 
 func TestProcessReport(t *testing.T) {
@@ -53,16 +104,17 @@ func TestProcessReport(t *testing.T) {
 		cancel      bool
 		outcome     reportOutcome
 		err         error
-		counter     *atomic.Uint64 // the counter that must go up by one; nil for none
+		counter     string // the count that must be one; empty for none
 		wantRequeue bool
 	}{
-		{name: "recorded", outcome: reportRecorded, counter: &reportSuccesses},
-		{name: "skipped", outcome: reportSkipped, counter: &reportSkips},
-		{name: "failed", err: errors.New("boom"), counter: &reportFailures, wantRequeue: true},
+		{name: "recorded", outcome: reportRecorded, counter: "argobot.status_reports/success"},
+		{name: "skipped", outcome: reportSkipped, counter: "argobot.status_reports/skipped"},
+		{name: "failed", err: errors.New("boom"), counter: "argobot.status_reports/failure", wantRequeue: true},
 		{name: "failed while shutting down", cancel: true, err: context.Canceled, wantRequeue: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			reader := useTestMetrics(t, ControllerFlux)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if tc.cancel {
@@ -72,10 +124,6 @@ func TestProcessReport(t *testing.T) {
 			defer queue.ShutDown()
 			queue.Add("ns/obj")
 
-			before := map[*atomic.Uint64]uint64{}
-			for _, c := range []*atomic.Uint64{&reportSuccesses, &reportSkips, &reportFailures} {
-				before[c] = c.Load()
-			}
 			var reported string
 			more := processReport(ctx, queue, func(_ context.Context, key string) (reportOutcome, error) {
 				reported = key
@@ -85,15 +133,11 @@ func TestProcessReport(t *testing.T) {
 			if !more || reported != "ns/obj" {
 				t.Fatalf("processReport = %v, reported %q; want true, \"ns/obj\"", more, reported)
 			}
-			for c, b := range before {
-				want := b
-				if c == tc.counter {
-					want++
-				}
-				if got := c.Load(); got != want {
-					t.Errorf("counter went from %d to %d, want %d", b, got, want)
-				}
+			want := map[string]int64{}
+			if tc.counter != "" {
+				want[tc.counter] = 1
 			}
+			assertCounts(t, collectCounts(t, reader, ControllerFlux), want)
 			if got := queue.NumRequeues("ns/obj") > 0; got != tc.wantRequeue {
 				t.Errorf("requeued = %v, want %v", got, tc.wantRequeue)
 			}
@@ -112,29 +156,42 @@ func TestProcessReport(t *testing.T) {
 	})
 }
 
-func TestMetricsHandler(t *testing.T) {
-	before := reportFailures.Load()
-	countReport(context.Background(), reportFailed, errors.New("boom"))
+// TestPrometheusExposition checks the names and labels the exporter gives the
+// counters, which dashboards and alerts depend on.
+func TestPrometheusExposition(t *testing.T) {
+	prev := meters
+	t.Cleanup(func() { meters = prev })
+	handler := setupMetrics(ControllerFlux)
+	if handler == nil {
+		t.Fatal("setupMetrics = nil")
+	}
+	countSync(context.Background(), nil)
+	countSync(context.Background(), errors.New("boom"))
+	countUnresolved(context.Background())
 	countReport(context.Background(), reportRecorded, nil)
+	countReport(context.Background(), reportSkipped, nil)
+	countReport(context.Background(), reportFailed, errors.New("boom"))
+	countReport(context.Background(), reportFailed, errors.New("boom"))
 
 	rec := httptest.NewRecorder()
-	metricsHandler(ControllerFlux).ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
 	body, _ := io.ReadAll(rec.Body)
 	text := string(body)
 
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain; version=0.0.4") {
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
 		t.Errorf("Content-Type = %q, want the Prometheus text format", ct)
 	}
 	for _, want := range []string{
 		"# TYPE argobot_syncs_total counter\n",
-		`argobot_syncs_total{controller="flux",result="success"} `,
-		`argobot_syncs_total{controller="flux",result="failure"} `,
+		`argobot_syncs_total{controller="flux",result="success"} 1` + "\n",
+		`argobot_syncs_total{controller="flux",result="failure"} 1` + "\n",
 		"# TYPE argobot_events_unresolved_total counter\n",
-		`argobot_events_unresolved_total{controller="flux"} `,
+		`argobot_events_unresolved_total{controller="flux"} 1` + "\n",
 		"# TYPE argobot_status_reports_total counter\n",
-		`argobot_status_reports_total{controller="flux",result="success"} `,
-		`argobot_status_reports_total{controller="flux",result="skipped"} `,
-		`argobot_status_reports_total{controller="flux",result="failure"} ` + strconv.FormatUint(before+1, 10) + "\n",
+		`argobot_status_reports_total{controller="flux",result="success"} 1` + "\n",
+		`argobot_status_reports_total{controller="flux",result="skipped"} 1` + "\n",
+		`argobot_status_reports_total{controller="flux",result="failure"} 2` + "\n",
+		`service_name="argobot"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("metrics missing %q:\n%s", want, text)
@@ -149,7 +206,8 @@ func TestServeMetrics(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- serveMetricsOn(ctx, ln, ControllerArgoCD) }()
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ok") })
+	go func() { done <- serveMetricsOn(ctx, ln, handler) }()
 
 	resp, err := http.Get("http://" + ln.Addr().String() + "/metrics")
 	if err != nil {
@@ -157,7 +215,7 @@ func TestServeMetrics(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `argobot_syncs_total{controller="argocd"`) {
+	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
 		t.Errorf("GET /metrics = %d:\n%s", resp.StatusCode, body)
 	}
 
@@ -172,23 +230,30 @@ func TestServeMetrics(t *testing.T) {
 	}
 }
 
-func TestServeMetricsAddressInUse(t *testing.T) {
+func TestServeMetricsNotServing(t *testing.T) {
 	taken, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer taken.Close()
+	handler := http.NotFoundHandler()
 
-	// Best-effort: an address that cannot be opened returns nil at once rather
-	// than failing argobot or blocking.
-	done := make(chan error, 1)
-	go func() { done <- serveMetrics(context.Background(), taken.Addr().String(), ControllerArgoCD) }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("serveMetrics = %v, want nil", err)
+	// Best-effort: an address that cannot be opened, or metrics that could not
+	// be set up (a nil handler), return nil at once rather than failing
+	// argobot or blocking.
+	for name, call := range map[string]func() error{
+		"address in use":   func() error { return serveMetrics(context.Background(), taken.Addr().String(), handler) },
+		"metrics disabled": func() error { return serveMetrics(context.Background(), "127.0.0.1:0", nil) },
+	} {
+		done := make(chan error, 1)
+		go func() { done <- call() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("%s: serveMetrics = %v, want nil", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: serveMetrics blocked", name)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("serveMetrics blocked on an address in use")
 	}
 }

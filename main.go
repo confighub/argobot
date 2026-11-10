@@ -70,6 +70,9 @@ func main() {
 
 	// Concurrency one: argobot runs no commands, and events are handled in
 	// delivery order on the poll goroutine regardless.
+	// Set up the counters before anything that counts starts.
+	metricsHandler := setupMetrics(cfg.Controller)
+
 	listener := channel.NewListener(hub, cubapi.ParseRef(cfg.Channel), channel.Options{Concurrency: 1}).
 		OnEvent(makeEventHandler(syncer, cfg))
 
@@ -79,9 +82,10 @@ func main() {
 		return listener.Run(gctx)
 	})
 
-	// Sync and live-status report counts, for Prometheus. Best-effort: a port
-	// that cannot be opened warns rather than stopping the bot.
-	g.Go(func() error { return serveMetrics(gctx, cfg.MetricsAddr, cfg.Controller) })
+	// Sync and live-status report counts (OpenTelemetry, exported for
+	// Prometheus). Best-effort: a port that cannot be opened warns rather than
+	// stopping the bot.
+	g.Go(func() error { return serveMetrics(gctx, cfg.MetricsAddr, metricsHandler) })
 
 	// Once, at startup, store facts about the cluster on its Target. Like
 	// live-status reporting, it is best-effort: without cluster access or Edit
