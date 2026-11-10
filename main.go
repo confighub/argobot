@@ -79,6 +79,10 @@ func main() {
 		return listener.Run(gctx)
 	})
 
+	// Sync and live-status report counts, for Prometheus. Best-effort: a port
+	// that cannot be opened warns rather than stopping the bot.
+	g.Go(func() error { return serveMetrics(gctx, cfg.MetricsAddr, cfg.Controller) })
+
 	// Once, at startup, store facts about the cluster on its Target. Like
 	// live-status reporting, it is best-effort: without cluster access or Edit
 	// on the Target, argobot warns and goes on syncing.

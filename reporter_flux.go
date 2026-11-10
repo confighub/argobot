@@ -165,7 +165,9 @@ func (r *fluxReporter) processNext(ctx context.Context) bool {
 	}
 	defer r.queue.Done(key)
 
-	if err := r.report(ctx, key); err != nil {
+	err := r.report(ctx, key)
+	countOutcome(err, &reportSuccesses, &reportFailures)
+	if err != nil {
 		log.Printf("[WARN] live-status reporter: %v", err)
 		r.queue.AddRateLimited(key)
 		return true

@@ -60,7 +60,9 @@ func makeEventHandler(syncer Syncer, cfg config) func(context.Context, *goclient
 		for _, appName := range appNames {
 			log.Printf("[INFO] argobot: %s (%s) → syncing %s %q", event.EventType, where, cfg.Controller, appName)
 
-			if err := syncer.Sync(ctx, appName); err != nil {
+			err := syncer.Sync(ctx, appName)
+			countOutcome(err, &syncSuccesses, &syncFailures)
+			if err != nil {
 				log.Printf("[ERROR] argobot: sync of %q failed: %v", appName, err)
 				continue
 			}

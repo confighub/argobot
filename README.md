@@ -37,6 +37,15 @@ When `CONFIGHUB_TARGET` names the Target that represents the cluster, argobot co
 
 Collecting needs Kubernetes discovery and `list` on CustomResourceDefinitions, StorageClasses and IngressClasses, which the read-only `ClusterRole` grants, and Edit on the Target. Like live-status reporting, it is best-effort: if it fails, argobot logs a warning and goes on syncing. It runs once per start, so a cluster upgrade reaches the Target's facts when argobot next restarts. The facts describe the cluster argobot runs in, which under Sveltos is the management cluster. `cub cluster up` sets `CONFIGHUB_TARGET` to the cluster's Target.
 
+### Metrics
+
+argobot serves Prometheus counters at `/metrics` on `METRICS_ADDR` (`:9090` by default; the manifests name the container port `metrics`), each labeled with `controller` and `result` (`success` or `failure`):
+
+- `argobot_syncs_total` — sync requests to the GitOps controller, one per Application, profile or OCIRepository an event resolved to.
+- `argobot_status_reports_total` — live-status passes over one watched object. A success is a pass that finished, whether or not it wrote (an unchanged object writes nothing); a failure is one that will be retried.
+
+The counters start at zero with each process. Serving them is best-effort: if the address cannot be opened, argobot warns and goes on without metrics.
+
 ### Sveltos
 
 `GITOPS_CONTROLLER=sveltos` makes argobot drive [Sveltos](https://projectsveltos.github.io/sveltos/) instead of Argo CD. Event handling, the Channel and the ConfigHub calls are the same; the two Argo-facing parts change. The `ARGO_*` variables are Argo CD only and are ignored.
@@ -86,6 +95,7 @@ All configuration is via environment variables:
 | `ARGO_REFRESH_TYPE` | no | `hard` (default) or `normal`. |
 | `ARGO_APP` | no | The single Argo CD Application every matching event syncs. If unset, the event's Space slug resolves to every Application whose OCI source names that Space, plus the one named after it. |
 | `CONFIGHUB_REPORT_LIVE_STATUS` | no | `false` to disable live-status reporting. On by default; see [Live-status reporting](#live-status-reporting). Needs Kubernetes access. |
+| `METRICS_ADDR` | no | Address to serve Prometheus metrics on, at `/metrics`. Defaults to `:9090`; see [Metrics](#metrics). |
 
 An empty variable is the same as an unset one. `argobot docgen env` prints these variables as a JSON Schema, with each one's description, default and allowed values.
 

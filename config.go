@@ -70,6 +70,10 @@ type config struct {
 	// access (in-cluster or a kubeconfig); when it cannot reach the cluster it is
 	// skipped with a warning rather than failing the bot.
 	ReportLiveStatus bool
+
+	// MetricsAddr is the address argobot serves its Prometheus metrics on, at
+	// /metrics (defaults to ":9090").
+	MetricsAddr string
 }
 
 // retiredEnv names the variables an earlier argobot read, for its subscriptions, its
@@ -106,6 +110,7 @@ type envVars struct {
 	ArgoRefreshType  string `env:"ARGO_REFRESH_TYPE" json:"ARGO_REFRESH_TYPE" default:"hard" enum:"hard,normal" description:"Argo CD only: refresh to request. hard re-resolves the source, including an OCI tag's digest."`
 	ArgoApp          string `env:"ARGO_APP" json:"ARGO_APP" description:"Argo CD only: the one Application every event syncs. Unset, the event's Space names the Applications to sync."`
 	ReportLiveStatus string `env:"CONFIGHUB_REPORT_LIVE_STATUS" json:"CONFIGHUB_REPORT_LIVE_STATUS" default:"true" enum:"true,false" description:"Whether argobot writes the status of what the controller deployed to each Release's LiveStatus."`
+	MetricsAddr      string `env:"METRICS_ADDR" json:"METRICS_ADDR" default:":9090" description:"Address argobot serves Prometheus metrics on, at /metrics: sync and live-status report counts by result."`
 }
 
 func loadConfig() (config, error) {
@@ -124,6 +129,7 @@ func loadConfig() (config, error) {
 		ArgoRefreshType:  env.ArgoRefreshType,
 		ArgoApp:          env.ArgoApp,
 		ReportLiveStatus: env.ReportLiveStatus != "false",
+		MetricsAddr:      env.MetricsAddr,
 	}
 	if cfg.Controller == "" {
 		cfg.Controller = ControllerArgoCD
@@ -133,6 +139,9 @@ func loadConfig() (config, error) {
 	}
 	if cfg.ArgoRefreshType == "" {
 		cfg.ArgoRefreshType = "hard"
+	}
+	if cfg.MetricsAddr == "" {
+		cfg.MetricsAddr = ":9090"
 	}
 
 	required := map[string]string{

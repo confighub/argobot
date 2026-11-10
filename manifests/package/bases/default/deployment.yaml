@@ -55,6 +55,10 @@ spec:
             # <space>/<slug>. The target input sets it.
             - name: CONFIGHUB_TARGET
               value: confighubplaceholder
+          # Prometheus metrics at /metrics (METRICS_ADDR, by default :9090).
+          ports:
+            - name: metrics
+              containerPort: 9090
           resources:
             requests:
               cpu: 25m
