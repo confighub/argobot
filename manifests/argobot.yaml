@@ -39,19 +39,21 @@ metadata:
   name: argobot
   namespace: argobot
 ---
-# argobot's control-plane namespace. It patches the Application's refresh
-# annotation to force a sync, and it may manage
-# other Argo CD resources here — so it gets read+write across the Argo CD
-# namespace. This is a namespaced Role, so it grants nothing outside `argocd`.
+# Argo CD: argobot patches an Application's argocd.argoproj.io/refresh
+# annotation to force a sync, and lists and watches Applications to find the
+# ones a Space deploys and to report their status. That is all it does in Argo
+# CD's namespace, which also holds the credentials of every cluster and
+# repository Argo CD deploys with, so the Role grants Applications alone. Its
+# namespace must be ARGO_NAMESPACE's.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: argobot-argocd
   namespace: argocd
 rules:
-  - apiGroups: ["*"]
-    resources: ["*"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -67,52 +69,25 @@ subjects:
     name: argobot
     namespace: argobot
 ---
-# Cluster-wide read-only access for the upcoming health/status reporting:
-# argobot will watch many resource kinds across all namespaces. Read across
-# namespaces cannot be a Role (namespaced), so it is a ClusterRole bound
-# cluster-wide. get/list/watch only — no write outside `argocd`.
-#
-# Secrets are deliberately excluded: argobot reports on resource health and
-# never needs credential contents. RBAC has no "all except X", and Secrets live
-# in the core ("") API group, so the core group is enumerated WITHOUT secrets,
-# while every other group is wildcarded (no Secrets exist outside core). To
-# cover a new CRD's API group, add it to the second rule's apiGroups list.
+# Cluster facts: when CONFIGHUB_TARGET is set, argobot reads the Kubernetes
+# version and the served resource types at startup, through discovery, which
+# every authenticated identity may read, and lists CustomResourceDefinitions,
+# StorageClasses and IngressClasses. Those are cluster-scoped, so this is a
+# ClusterRole; it grants listing them and nothing else.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: argobot-read
 rules:
-  # Core API group, minus Secrets.
-  - apiGroups: [""]
-    resources:
-      - pods
-      - pods/log
-      - services
-      - endpoints
-      - configmaps
-      - events
-      - namespaces
-      - nodes
-      - persistentvolumeclaims
-      - persistentvolumes
-      - replicationcontrollers
-      - resourcequotas
-      - limitranges
-      - serviceaccounts
-    verbs: ["get", "list", "watch"]
-  # All other API groups: read everything (Secrets exist only in core, above).
-  - apiGroups:
-      - apps
-      - batch
-      - autoscaling
-      - networking.k8s.io
-      - policy
-      - storage.k8s.io
-      - discovery.k8s.io
-      - apiextensions.k8s.io
-      - argoproj.io
-    resources: ["*"]
-    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["list"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

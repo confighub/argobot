@@ -16,7 +16,7 @@ spec:
       default: true
       description: |
         What argobot needs under every GitOps controller: its Namespace,
-        ServiceAccount, cluster-wide read-only access, and the Deployment,
+        ServiceAccount, list access for its cluster facts, and the Deployment,
         which reads its service account key from the argobot-secrets Secret,
         supplied out of band. The controller group adds what one GitOps
         controller needs.

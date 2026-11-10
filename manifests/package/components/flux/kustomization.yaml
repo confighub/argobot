@@ -22,14 +22,3 @@ patches:
                 env:
                   - name: GITOPS_CONTROLLER
                     value: flux
-  # Read OCIRepositories and Kustomizations, for live status.
-  - target:
-      kind: ClusterRole
-      name: argobot-read
-    patch: |-
-      - op: add
-        path: /rules/1/apiGroups/-
-        value: source.toolkit.fluxcd.io
-      - op: add
-        path: /rules/1/apiGroups/-
-        value: kustomize.toolkit.fluxcd.io

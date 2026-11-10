@@ -37,10 +37,12 @@ metadata:
   name: argobot
   namespace: argobot
 ---
-# Forcing a redeploy: argobot patches the profile.projectsveltos.io/redeploy
-# annotation on the ClusterProfile (cluster-scoped) or Profile (namespaced) that
-# deploys a Space. Sveltos's profiles aren't confined to one namespace, so this is
-# a ClusterRole; it grants nothing beyond reading and patching profiles.
+# Sveltos: argobot patches the profile.projectsveltos.io/redeploy annotation on
+# the ClusterProfile (cluster-scoped) or Profile (namespaced) that deploys a
+# Space to force a redeploy, and lists and watches ClusterSummaries and
+# HealthCheckReports (a remote cluster's reports are collected into the
+# management cluster) to report status. These aren't confined to one namespace,
+# so this is a ClusterRole; it grants nothing beyond those.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -49,6 +51,12 @@ rules:
   - apiGroups: ["config.projectsveltos.io"]
     resources: ["clusterprofiles", "profiles"]
     verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["config.projectsveltos.io"]
+    resources: ["clustersummaries"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["lib.projectsveltos.io"]
+    resources: ["healthcheckreports"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -63,52 +71,25 @@ subjects:
     name: argobot
     namespace: argobot
 ---
-# Cluster-wide read-only access for live-status reporting: argobot watches
-# Sveltos HealthCheckReports and ClusterSummaries in every namespace (a remote
-# cluster's reports are collected into the management cluster). get/list/watch
-# only.
-#
-# Secrets are deliberately excluded: RBAC has no "all except X", and Secrets live
-# in the core ("") API group, so the core group is enumerated WITHOUT secrets,
-# while every other group is wildcarded (no Secrets exist outside core). To cover
-# a new CRD's API group, add it to the second rule's apiGroups list.
+# Cluster facts: when CONFIGHUB_TARGET is set, argobot reads the Kubernetes
+# version and the served resource types at startup, through discovery, which
+# every authenticated identity may read, and lists CustomResourceDefinitions,
+# StorageClasses and IngressClasses. Those are cluster-scoped, so this is a
+# ClusterRole; it grants listing them and nothing else.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: argobot-read
 rules:
-  # Core API group, minus Secrets.
-  - apiGroups: [""]
-    resources:
-      - pods
-      - pods/log
-      - services
-      - endpoints
-      - configmaps
-      - events
-      - namespaces
-      - nodes
-      - persistentvolumeclaims
-      - persistentvolumes
-      - replicationcontrollers
-      - resourcequotas
-      - limitranges
-      - serviceaccounts
-    verbs: ["get", "list", "watch"]
-  # All other API groups: read everything (Secrets exist only in core, above).
-  - apiGroups:
-      - apps
-      - batch
-      - autoscaling
-      - networking.k8s.io
-      - policy
-      - storage.k8s.io
-      - discovery.k8s.io
-      - apiextensions.k8s.io
-      - config.projectsveltos.io
-      - lib.projectsveltos.io
-    resources: ["*"]
-    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["list"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

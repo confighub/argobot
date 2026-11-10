@@ -27,11 +27,3 @@ patches:
                     value: argocd
                   - name: ARGO_REFRESH_TYPE
                     value: hard
-  # Read Applications, for live status.
-  - target:
-      kind: ClusterRole
-      name: argobot-read
-    patch: |-
-      - op: add
-        path: /rules/1/apiGroups/-
-        value: argoproj.io
