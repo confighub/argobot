@@ -23,6 +23,11 @@
 
 set -euo pipefail
 
+# sort's order follows the locale: en_US ignores punctuation, so it would put
+# go.yaml.in after golang.org where CI's container (byte order) puts it before.
+# Pin byte order so the file is the same wherever it is generated.
+export LC_ALL=C
+
 # Pinned for reproducible output. Bump deliberately.
 GOLICENSES_VERSION="v2.0.1"
 
