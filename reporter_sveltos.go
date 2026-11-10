@@ -182,29 +182,13 @@ func (r *sveltosReporter) Run(ctx context.Context) error {
 	log.Printf("[INFO] live-status reporter: watching Sveltos HealthCheckReports")
 
 	go func() {
-		for r.processNext(ctx) {
+		for processReport(ctx, r.queue, r.report) {
 		}
 	}()
 
 	<-ctx.Done()
 	r.queue.ShutDown()
 	return ctx.Err()
-}
-
-func (r *sveltosReporter) processNext(ctx context.Context) bool {
-	key, shutdown := r.queue.Get()
-	if shutdown {
-		return false
-	}
-	defer r.queue.Done(key)
-
-	if err := r.report(ctx, key); err != nil {
-		log.Printf("[WARN] live-status reporter: %v", err)
-		r.queue.AddRateLimited(key)
-		return true
-	}
-	r.queue.Forget(key)
-	return true
 }
 
 // enqueue schedules a report after the debounce window, coalescing a burst of
@@ -235,27 +219,28 @@ func (r *sveltosReporter) enqueueClusterReports(obj any) {
 // report projects the HealthCheckReport named by key and, for each Space whose
 // objects it collected, writes the status to the LiveStatus of the Release that
 // Space is running, if it changed since the last write. Spaces or Releases this
-// worker cannot see are ignored.
-func (r *sveltosReporter) report(ctx context.Context, key string) error {
+// worker cannot see are ignored; a report none of whose Spaces resolves to a
+// Release is reportSkipped.
+func (r *sveltosReporter) report(ctx context.Context, key string) (reportOutcome, error) {
 	obj, exists, err := r.reports.GetStore().GetByKey(key)
 	if err != nil {
-		return fmt.Errorf("look up %s: %w", key, err)
+		return reportFailed, fmt.Errorf("look up %s: %w", key, err)
 	}
 	if !exists {
 		// Deleted; see the DeleteFunc note in newSveltosReporter.
 		delete(r.lastSig, key)
-		return nil
+		return reportSkipped, nil
 	}
 	u, ok := obj.(*unstructured.Unstructured)
 	if !ok {
-		return fmt.Errorf("unexpected object type %T for %s", obj, key)
+		return reportFailed, fmt.Errorf("unexpected object type %T for %s", obj, key)
 	}
 	if !namesCluster(u) {
 		// The agent's own copy, which Sveltos also collects into the management
 		// cluster as a copy that names the cluster. Reporting from both would
 		// let whichever is processed last decide the LiveStatus, and this one
 		// cannot be matched to a ClusterSummary.
-		return nil
+		return reportSkipped, nil
 	}
 
 	observations := observeSpaces(u)
@@ -265,29 +250,35 @@ func (r *sveltosReporter) report(ctx context.Context, key string) error {
 	}
 	slices.SortFunc(spaceIDs, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
 
+	outcome := reportSkipped
 	var errs []error
 	for _, spaceID := range spaceIDs {
-		if err := r.reportSpace(ctx, key, u, spaceID, observations[spaceID]); err != nil {
+		spaceOutcome, err := r.reportSpace(ctx, key, u, spaceID, observations[spaceID])
+		if err != nil {
 			errs = append(errs, err)
+			continue
+		}
+		if spaceOutcome == reportRecorded {
+			outcome = reportRecorded
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("report %s: %v", key, errs)
+		return reportFailed, fmt.Errorf("report %s: %v", key, errs)
 	}
-	return nil
+	return outcome, nil
 }
 
 // reportSpace writes one Space's part of a report to the Release it is running.
 func (r *sveltosReporter) reportSpace(ctx context.Context, key string, report *unstructured.Unstructured,
-	spaceID uuid.UUID, obs *spaceObservation) error {
+	spaceID uuid.UUID, obs *spaceObservation) (reportOutcome, error) {
 	releaseID, known, err := r.findRelease(ctx, spaceID, obs.Revisions)
 	if err != nil {
-		return err
+		return reportFailed, err
 	}
 	if !known {
 		// Not a Space this worker can see, or revisions no published Release
 		// bundles: nothing to record it on.
-		return nil
+		return reportSkipped, nil
 	}
 
 	featureStatus, dataSource := r.deployStatus(clusterOf(report), obs.SpaceSlug)
@@ -300,16 +291,16 @@ func (r *sveltosReporter) reportSpace(ctx context.Context, key string, report *u
 	// every pass), so an unchanged report produces no write.
 	encoded, err := json.Marshal(status)
 	if err != nil {
-		return fmt.Errorf("marshal status signature: %w", err)
+		return reportFailed, fmt.Errorf("marshal status signature: %w", err)
 	}
 	sig := releaseID.String() + " " + string(encoded)
 	if r.lastSig[key][spaceID] == sig {
-		return nil
+		return reportRecorded, nil
 	}
 
 	status.ObservedAt = time.Now().UTC()
 	if err := r.patchRelease(ctx, spaceID, releaseID, status); err != nil {
-		return err
+		return reportFailed, err
 	}
 	if r.lastSig[key] == nil {
 		r.lastSig[key] = make(map[uuid.UUID]string)
@@ -317,7 +308,7 @@ func (r *sveltosReporter) reportSpace(ctx context.Context, key string, report *u
 	r.lastSig[key][spaceID] = sig
 	log.Printf("[INFO] live-status: %s -> release %s of space %s (sync=%s health=%s)",
 		dataSource, releaseID, spaceID, status.Sync, status.Health)
-	return nil
+	return reportRecorded, nil
 }
 
 // findRelease resolves the Release a Space is running from the Unit revisions

@@ -48,6 +48,7 @@ func makeEventHandler(syncer Syncer, cfg config) func(context.Context, *goclient
 
 		appNames := resolveAppNames(ctx, syncer, cfg, event)
 		if len(appNames) == 0 {
+			unresolvedEvents.Add(1)
 			if slug := eventSpaceSlug(event); slug != "" {
 				log.Printf("[WARN] argobot: %s (%s) — no %s sync target found for space %q; skipping.",
 					event.EventType, where, cfg.Controller, slug)
@@ -60,7 +61,9 @@ func makeEventHandler(syncer Syncer, cfg config) func(context.Context, *goclient
 		for _, appName := range appNames {
 			log.Printf("[INFO] argobot: %s (%s) → syncing %s %q", event.EventType, where, cfg.Controller, appName)
 
-			if err := syncer.Sync(ctx, appName); err != nil {
+			err := syncer.Sync(ctx, appName)
+			countSync(ctx, err)
+			if err != nil {
 				log.Printf("[ERROR] argobot: sync of %q failed: %v", appName, err)
 				continue
 			}

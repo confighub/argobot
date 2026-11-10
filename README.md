@@ -37,6 +37,18 @@ When `CONFIGHUB_TARGET` names the Target that represents the cluster, argobot co
 
 Collecting needs Kubernetes discovery and `list` on CustomResourceDefinitions, StorageClasses and IngressClasses, which the read-only `ClusterRole` grants, and Edit on the Target. Like live-status reporting, it is best-effort: if it fails, argobot logs a warning and goes on syncing. It runs once per start, so a cluster upgrade reaches the Target's facts when argobot next restarts. The facts describe the cluster argobot runs in, which under Sveltos is the management cluster. `cub cluster up` sets `CONFIGHUB_TARGET` to the cluster's Target.
 
+### Metrics
+
+argobot serves Prometheus counters at `/metrics` on `METRICS_ADDR` (`:9090` by default), each labeled with `controller`:
+
+- `argobot_syncs_total` — sync requests to the GitOps controller, one per Application, profile or OCIRepository an event resolved to, by `result`: `success` or `failure`.
+- `argobot_events_unresolved_total` — `release.published` events that resolved to no Application, profile or OCIRepository, so nothing was synced. A steady rise usually means a sync target is misnamed or its OCI URL names a different Space.
+- `argobot_status_reports_total` — live-status passes over one watched object, by `result`: `success` when the object's Release was found (whether or not anything was written, since an unchanged object writes nothing), `skipped` when there was nothing to record on (the object is gone, or names no Space or Release argobot can see), and `failure` when the pass will be retried.
+
+A call that fails because argobot is shutting down is not counted as a failure. The counters start at zero with each process. Serving them is best-effort: if the address cannot be opened, argobot warns and goes on without metrics.
+
+The manifests name the container port `metrics` and set it to 9090. If you change the port in `METRICS_ADDR`, change `containerPort` to match. They include no Service, ServiceMonitor or scrape annotations; add whichever your Prometheus uses to discover targets.
+
 ### Sveltos
 
 `GITOPS_CONTROLLER=sveltos` makes argobot drive [Sveltos](https://projectsveltos.github.io/sveltos/) instead of Argo CD. Event handling, the Channel and the ConfigHub calls are the same; the two Argo-facing parts change. The `ARGO_*` variables are Argo CD only and are ignored.
@@ -86,6 +98,7 @@ All configuration is via environment variables:
 | `ARGO_REFRESH_TYPE` | no | `hard` (default) or `normal`. |
 | `ARGO_APP` | no | The single Argo CD Application every matching event syncs. If unset, the event's Space slug resolves to every Application whose OCI source names that Space, plus the one named after it. |
 | `CONFIGHUB_REPORT_LIVE_STATUS` | no | `false` to disable live-status reporting. On by default; see [Live-status reporting](#live-status-reporting). Needs Kubernetes access. |
+| `METRICS_ADDR` | no | Address to serve Prometheus metrics on, at `/metrics`. Defaults to `:9090`; changing the port means changing the manifests' `containerPort` too. See [Metrics](#metrics). |
 
 An empty variable is the same as an unset one. `argobot docgen env` prints these variables as a JSON Schema, with each one's description, default and allowed values.
 

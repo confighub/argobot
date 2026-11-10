@@ -166,24 +166,8 @@ func (r *reporter) Run(ctx context.Context) error {
 }
 
 func (r *reporter) runWorker(ctx context.Context) {
-	for r.processNext(ctx) {
+	for processReport(ctx, r.queue, r.report) {
 	}
-}
-
-func (r *reporter) processNext(ctx context.Context) bool {
-	key, shutdown := r.queue.Get()
-	if shutdown {
-		return false
-	}
-	defer r.queue.Done(key)
-
-	if err := r.report(ctx, key); err != nil {
-		log.Printf("[WARN] live-status reporter: %v", err)
-		r.queue.AddRateLimited(key)
-		return true
-	}
-	r.queue.Forget(key)
-	return true
 }
 
 // enqueue schedules a report for the object after the debounce window, coalescing
@@ -200,45 +184,45 @@ func (r *reporter) enqueue(obj any) {
 // report projects the current state of the Application named by key and, if it
 // changed since the last write, writes it to the LiveStatus of the Release the
 // Application is running. Applications whose Space or Release argobot cannot see
-// are ignored.
-func (r *reporter) report(ctx context.Context, key string) error {
+// are ignored (reportSkipped).
+func (r *reporter) report(ctx context.Context, key string) (reportOutcome, error) {
 	obj, exists, err := r.informer.GetStore().GetByKey(key)
 	if err != nil {
-		return fmt.Errorf("look up %s: %w", key, err)
+		return reportFailed, fmt.Errorf("look up %s: %w", key, err)
 	}
 	if !exists {
 		// Deleted; see the DeleteFunc note in newReporter.
 		delete(r.lastSig, key)
-		return nil
+		return reportSkipped, nil
 	}
 
 	u, ok := obj.(*unstructured.Unstructured)
 	if !ok {
-		return fmt.Errorf("unexpected object type %T for %s", obj, key)
+		return reportFailed, fmt.Errorf("unexpected object type %T for %s", obj, key)
 	}
 
 	slug := deploymentSpaceSlug(u)
 	spaceID, known, err := r.getSpaceID(ctx, slug)
 	if err != nil {
-		return err
+		return reportFailed, err
 	}
 	if !known {
 		// Slug did not resolve to a Space argobot can see -- not ours.
-		return nil
+		return reportSkipped, nil
 	}
 	revision, _, _ := unstructured.NestedString(u.Object, "status", "sync", "revision")
 	if revision == "" {
 		// Argo has not resolved a revision yet, so there is no Release to report on.
-		return nil
+		return reportSkipped, nil
 	}
 	releaseID, known, err := r.getReleaseID(ctx, spaceID, revision)
 	if err != nil {
-		return err
+		return reportFailed, err
 	}
 	if !known {
 		// A revision that is no Release of the Space, such as one withdrawn and
 		// deleted: nothing to record it on.
-		return nil
+		return reportSkipped, nil
 	}
 
 	status := projectStatus(u)
@@ -247,21 +231,21 @@ func (r *reporter) report(ctx context.Context, key string) error {
 	// every pass), so an unchanged Application produces no write.
 	encoded, err := json.Marshal(status)
 	if err != nil {
-		return fmt.Errorf("marshal status signature: %w", err)
+		return reportFailed, fmt.Errorf("marshal status signature: %w", err)
 	}
 	sig := releaseID.String() + " " + string(encoded)
 	if r.lastSig[key] == sig {
-		return nil
+		return reportRecorded, nil
 	}
 
 	status.ObservedAt = time.Now().UTC()
 	if err := r.patchRelease(ctx, spaceID, releaseID, status); err != nil {
-		return err
+		return reportFailed, err
 	}
 	r.lastSig[key] = sig
 	log.Printf("[INFO] live-status: %s -> release %s of space %s (sync=%s health=%s)",
 		u.GetName(), releaseID, spaceID, status.Sync, status.Health)
-	return nil
+	return reportRecorded, nil
 }
 
 // getSpaceID resolves a deployment Space slug to its id. argobot can read the
