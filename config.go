@@ -110,7 +110,7 @@ type envVars struct {
 	ArgoRefreshType  string `env:"ARGO_REFRESH_TYPE" json:"ARGO_REFRESH_TYPE" default:"hard" enum:"hard,normal" description:"Argo CD only: refresh to request. hard re-resolves the source, including an OCI tag's digest."`
 	ArgoApp          string `env:"ARGO_APP" json:"ARGO_APP" description:"Argo CD only: the one Application every event syncs. Unset, the event's Space names the Applications to sync."`
 	ReportLiveStatus string `env:"CONFIGHUB_REPORT_LIVE_STATUS" json:"CONFIGHUB_REPORT_LIVE_STATUS" default:"true" enum:"true,false" description:"Whether argobot writes the status of what the controller deployed to each Release's LiveStatus."`
-	MetricsAddr      string `env:"METRICS_ADDR" json:"METRICS_ADDR" default:":9090" description:"Address argobot serves Prometheus metrics on, at /metrics: sync and live-status report counts by result."`
+	MetricsAddr      string `env:"METRICS_ADDR" json:"METRICS_ADDR" default:":9090" description:"Address argobot serves Prometheus metrics on, at /metrics: sync, unresolved event and live-status report counts."`
 }
 
 func loadConfig() (config, error) {
