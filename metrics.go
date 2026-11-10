@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -19,7 +20,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/resource"
 	"k8s.io/client-go/util/workqueue"
 )
 
@@ -55,10 +55,16 @@ type instruments struct {
 	reports    metric.Int64Counter
 }
 
-// meters is the package's counters. Until main installs real ones with
-// setMetrics it records to a no-op provider, so code paths that count work
-// without metrics being set up (as in most tests).
-var meters = mustNewInstruments(noop.NewMeterProvider(), "")
+// meters holds the package's counters. Until main installs real ones with
+// setMetrics they record to a no-op provider, so code paths that count work
+// without metrics being set up (as in most tests). It is an atomic pointer so
+// that installing the counters is safe whenever it happens, not only before
+// the event handler and reporters start.
+var meters atomic.Pointer[instruments]
+
+func init() {
+	meters.Store(mustNewInstruments(noop.NewMeterProvider(), ""))
+}
 
 func newInstruments(mp metric.MeterProvider, controller string) (*instruments, error) {
 	m := mp.Meter(meterName)
@@ -97,12 +103,24 @@ func mustNewInstruments(mp metric.MeterProvider, controller string) *instruments
 }
 
 // setMetrics points the package's counters at mp, labeled with controller.
+// Every series is created at zero, so each is exported from the start: a
+// series Prometheus first sees at 1 hides that increment from increase() and
+// rate(), and an alert on a failure series would otherwise see no data until
+// the first failure.
 func setMetrics(mp metric.MeterProvider, controller string) error {
 	i, err := newInstruments(mp, controller)
 	if err != nil {
 		return err
 	}
-	meters = i
+	ctx := context.Background()
+	for _, r := range []string{resultSuccess, resultFailure} {
+		i.syncs.Add(ctx, 0, i.result(r))
+	}
+	i.unresolved.Add(ctx, 0, metric.WithAttributes(i.controller))
+	for _, r := range []string{resultSuccess, resultSkipped, resultFailure} {
+		i.reports.Add(ctx, 0, i.result(r))
+	}
+	meters.Store(i)
 	return nil
 }
 
@@ -112,16 +130,18 @@ func (i *instruments) result(r string) metric.AddOption {
 
 // countUnresolved records an event that resolved to no sync target.
 func countUnresolved(ctx context.Context) {
-	meters.unresolved.Add(ctx, 1, metric.WithAttributes(meters.controller))
+	m := meters.Load()
+	m.unresolved.Add(ctx, 1, metric.WithAttributes(m.controller))
 }
 
 // countSync records the result of one Syncer.Sync call.
 func countSync(ctx context.Context, err error) {
+	m := meters.Load()
 	switch {
 	case err == nil:
-		meters.syncs.Add(ctx, 1, meters.result(resultSuccess))
+		m.syncs.Add(ctx, 1, m.result(resultSuccess))
 	case ctx.Err() == nil:
-		meters.syncs.Add(ctx, 1, meters.result(resultFailure))
+		m.syncs.Add(ctx, 1, m.result(resultFailure))
 	}
 }
 
@@ -141,15 +161,16 @@ const (
 
 // countReport records the result of one live-status pass.
 func countReport(ctx context.Context, outcome reportOutcome, err error) {
+	m := meters.Load()
 	switch {
 	case err != nil:
 		if ctx.Err() == nil {
-			meters.reports.Add(ctx, 1, meters.result(resultFailure))
+			m.reports.Add(ctx, 1, m.result(resultFailure))
 		}
 	case outcome == reportSkipped:
-		meters.reports.Add(ctx, 1, meters.result(resultSkipped))
+		m.reports.Add(ctx, 1, m.result(resultSkipped))
 	default:
-		meters.reports.Add(ctx, 1, meters.result(resultSuccess))
+		m.reports.Add(ctx, 1, m.result(resultSuccess))
 	}
 }
 
@@ -177,26 +198,26 @@ func processReport(ctx context.Context, queue workqueue.TypedRateLimitingInterfa
 
 // newPrometheusMetrics builds a MeterProvider whose metrics are exported to a
 // fresh Prometheus registry, and a handler serving that registry. The registry
-// holds only argobot's own metrics (plus OpenTelemetry's target_info), not the
-// Go runtime collectors of the default registry.
+// holds only argobot's own counters: not the Go runtime collectors of the
+// default registry, and not target_info. target_info would export the
+// MeterProvider's resource, which the SDK always merges with
+// OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME; every variable argobot reads
+// is declared in envVars, and these are not. Prometheus identifies the target
+// by its job and instance labels instead.
 func newPrometheusMetrics() (*sdkmetric.MeterProvider, http.Handler, error) {
 	reg := prometheus.NewRegistry()
-	exporter, err := otelprom.New(otelprom.WithRegisterer(reg), otelprom.WithoutScopeInfo())
+	exporter, err := otelprom.New(otelprom.WithRegisterer(reg),
+		otelprom.WithoutScopeInfo(), otelprom.WithoutTargetInfo())
 	if err != nil {
 		return nil, nil, fmt.Errorf("prometheus exporter: %w", err)
 	}
-	res, err := resource.Merge(resource.Default(),
-		resource.NewSchemaless(attribute.String("service.name", "argobot")))
-	if err != nil {
-		return nil, nil, fmt.Errorf("metrics resource: %w", err)
-	}
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter), sdkmetric.WithResource(res))
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter))
 	return mp, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), nil
 }
 
 // setupMetrics points the package's counters at a Prometheus-exported
-// MeterProvider and returns the handler that serves them. It must run before
-// anything counts, since the counters are swapped without a lock. Like
+// MeterProvider and returns the handler that serves them. main calls it before
+// anything counts, so no count is lost to the no-op counters. Like
 // live-status reporting it is best-effort: on failure it warns, leaves the
 // counters as no-ops, and returns nil.
 func setupMetrics(controller string) http.Handler {

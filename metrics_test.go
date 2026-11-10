@@ -25,11 +25,11 @@ import (
 func useTestMetrics(t *testing.T, controller string) *sdkmetric.ManualReader {
 	t.Helper()
 	reader := sdkmetric.NewManualReader()
-	prev := meters
+	prev := meters.Load()
 	if err := setMetrics(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)), controller); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { meters = prev })
+	t.Cleanup(func() { meters.Store(prev) })
 	return reader
 }
 
@@ -159,12 +159,35 @@ func TestProcessReport(t *testing.T) {
 // TestPrometheusExposition checks the names and labels the exporter gives the
 // counters, which dashboards and alerts depend on.
 func TestPrometheusExposition(t *testing.T) {
-	prev := meters
-	t.Cleanup(func() { meters = prev })
+	// OTel's own environment variables, which argobot does not declare, must
+	// not reach /metrics.
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "leaked=yes")
+	t.Setenv("OTEL_SERVICE_NAME", "leaked")
+	prev := meters.Load()
+	t.Cleanup(func() { meters.Store(prev) })
 	handler := setupMetrics(ControllerFlux)
 	if handler == nil {
 		t.Fatal("setupMetrics = nil")
 	}
+
+	// Every series is exported at zero before anything is counted.
+	fresh := scrape(t, handler)
+	for _, want := range []string{
+		`argobot_syncs_total{controller="flux",result="success"} 0` + "\n",
+		`argobot_syncs_total{controller="flux",result="failure"} 0` + "\n",
+		`argobot_events_unresolved_total{controller="flux"} 0` + "\n",
+		`argobot_status_reports_total{controller="flux",result="success"} 0` + "\n",
+		`argobot_status_reports_total{controller="flux",result="skipped"} 0` + "\n",
+		`argobot_status_reports_total{controller="flux",result="failure"} 0` + "\n",
+	} {
+		if !strings.Contains(fresh, want) {
+			t.Errorf("metrics before any count missing %q:\n%s", want, fresh)
+		}
+	}
+	if strings.Contains(fresh, "leaked") || strings.Contains(fresh, "target_info") {
+		t.Errorf("metrics carry target_info or OTEL_* environment attributes:\n%s", fresh)
+	}
+
 	countSync(context.Background(), nil)
 	countSync(context.Background(), errors.New("boom"))
 	countUnresolved(context.Background())
@@ -173,14 +196,7 @@ func TestPrometheusExposition(t *testing.T) {
 	countReport(context.Background(), reportFailed, errors.New("boom"))
 	countReport(context.Background(), reportFailed, errors.New("boom"))
 
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
-	body, _ := io.ReadAll(rec.Body)
-	text := string(body)
-
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
-		t.Errorf("Content-Type = %q, want the Prometheus text format", ct)
-	}
+	text := scrape(t, handler)
 	for _, want := range []string{
 		"# TYPE argobot_syncs_total counter\n",
 		`argobot_syncs_total{controller="flux",result="success"} 1` + "\n",
@@ -191,12 +207,23 @@ func TestPrometheusExposition(t *testing.T) {
 		`argobot_status_reports_total{controller="flux",result="success"} 1` + "\n",
 		`argobot_status_reports_total{controller="flux",result="skipped"} 1` + "\n",
 		`argobot_status_reports_total{controller="flux",result="failure"} 2` + "\n",
-		`service_name="argobot"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("metrics missing %q:\n%s", want, text)
 		}
 	}
+}
+
+// scrape fetches /metrics from handler in the Prometheus text format.
+func scrape(t *testing.T, handler http.Handler) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("Content-Type = %q, want the Prometheus text format", ct)
+	}
+	body, _ := io.ReadAll(rec.Body)
+	return string(body)
 }
 
 func TestServeMetrics(t *testing.T) {

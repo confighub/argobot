@@ -27,10 +27,11 @@ Scripts (run from repo root):
 
 ## Architecture
 
-`main.go` runs three things under one errgroup sharing one `cubapi.Client` (authenticated by signing an assertion with the private JWK):
+`main.go` runs four things under one errgroup sharing one `cubapi.Client` (authenticated by signing an assertion with the private JWK):
 1. **Channel listener** (`events.go`) → `makeEventHandler` resolves an event's Space slug to controller object names and calls `Syncer.Sync` on each. Resolution: `ARGO_APP` if set (Argo only), otherwise every object whose OCI source URL ends in `/space/<slug>` (from `Syncer.RepoURLs`) plus the object named `<slug>`.
 2. **Live-status reporter** (`reporter*.go`) — best-effort; failure to build it only warns.
 3. **Cluster facts** (`facts.go`) — once at startup, best-effort.
+4. **Metrics server** (`metrics.go`) — best-effort. Counters are OpenTelemetry instruments in the package-level `meters` (an atomic pointer, no-op until `setupMetrics` installs real ones), served at `/metrics` through the OTel Prometheus exporter on a private registry. The README's metric names and labels are what dashboards depend on; `TestPrometheusExposition` pins them. Every series is created at zero, and `target_info` is off so undeclared `OTEL_*` variables can't reach the output.
 
 Two seams carry the controller switch:
 - **`Syncer` interface** (`syncer.go`), implemented in subpackages `kube/` (Argo CD: patch `argocd.argoproj.io/refresh`), `sveltos/` (patch `profile.projectsveltos.io/redeploy` with a timestamp), `flux/` (patch `reconcile.fluxcd.io/requestedAt` with a timestamp). All go through the Kubernetes dynamic client; `kube.NewDynamicClient`/`kube.RestConfig` are shared (in-cluster or kubeconfig).
