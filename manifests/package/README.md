@@ -29,6 +29,8 @@ cub function do --space argobot-my-cluster --unit argobot \
   set-env argobot ARGO_REFRESH_TYPE=normal
 ```
 
+Metrics are the exception: the `metrics` input also sets the `metrics` port and the scrape annotations, which `set-env` leaves alone. Turning metrics off with `set-env argobot METRICS_ENABLED=false` leaves Prometheus scraping a port nothing serves, and turning them on that way leaves the pod unscraped. Change the input and render again instead. Likewise, moving the port with `METRICS_ADDR` needs the `metrics` containerPort moved too.
+
 ## Install
 
 argobot needs the following before installing it, set up as under [Setup](../../README.md#setup):
@@ -56,7 +58,7 @@ Add `--select flux` or `--select sveltos` for those controllers.
 | `channel` | `confighubplaceholder` | The Channel argobot claims, as `<space>/<slug>`. |
 | `target` | `confighubplaceholder` | The Target that stands for the cluster, as `<space>/<slug>`. argobot stores the cluster's facts on it. |
 | `confighub_url` | `https://hub.confighub.com` | The ConfigHub URL as the cluster reaches it. |
-| `metrics` | `true` | Whether argobot serves Prometheus metrics. `false` sets `METRICS_ENABLED=false` and drops the Deployment's `metrics` port. |
+| `metrics` | `true` | Whether argobot serves Prometheus metrics. `true` adds the `prometheus.io/scrape` and `prometheus.io/path` pod annotations, which only a scrape config that reads `prometheus.io/*` honours (the Prometheus Operator needs a PodMonitor instead); Prometheus scrapes the `metrics` containerPort. `false` sets `METRICS_ENABLED=false` and drops that port and the annotations. Switch metrics with this input and a new render, not `set-env`: see below. |
 
 To run another image, such as a mirror's copy, pass `--set-image ghcr.io/confighub/argobot=<registry>/argobot:<tag>`.
 
