@@ -134,6 +134,25 @@ ports="$(yq -o json -I 0 '.spec.template.spec.containers[0].ports' "${work}/no-m
 [ "$ports" = null ] || fail "no-metrics: ports are ${ports}, want none"
 ports="$(yq -r '.spec.template.spec.containers[0].ports[].name' "${work}/base/out/manifests/deployment-argobot-argobot.yaml")"
 [ "$ports" = metrics ] || fail "base: ports are ${ports:-none}, want metrics"
+# Scrape annotations come and go with the port.
+ann="$(yq -o json -I 0 '.spec.template.metadata.annotations | sort_keys(.)' "${work}/base/out/manifests/deployment-argobot-argobot.yaml")"
+[ "$ann" = '{"prometheus.io/path":"/metrics","prometheus.io/scrape":"true"}' ] ||
+  fail "base: pod annotations are ${ann}, want the prometheus.io scrape annotations"
+ann="$(yq -o json -I 0 '.spec.template.metadata.annotations' "${work}/no-metrics/out/manifests/deployment-argobot-argobot.yaml")"
+[ "$ann" = null ] || fail "no-metrics: pod annotations are ${ann}, want none"
+# Turning metrics off removes only the prometheus.io annotations: another pod
+# annotation stays. Rendered from a copy of the package that adds one.
+cp -r "$pkg" "${work}/pkg-annotated"
+yq -i '.spec.template.metadata.annotations."example.com/keep" = "yes"' \
+  "${work}/pkg-annotated/bases/default/deployment.yaml"
+if "$installer" setup --pull "${work}/pkg-annotated" --work-dir "${work}/no-metrics-annotated" "${common[@]}" \
+  --input metrics=false > "${work}/no-metrics-annotated.log" 2>&1; then
+  ann="$(yq -o json -I 0 '.spec.template.metadata.annotations' "${work}/no-metrics-annotated/out/manifests/deployment-argobot-argobot.yaml")"
+  [ "$ann" = '{"example.com/keep":"yes"}' ] || fail "no-metrics-annotated: pod annotations are ${ann}, want example.com/keep alone"
+else
+  fail "no-metrics-annotated: render failed"
+  sed 's/^/  /' "${work}/no-metrics-annotated.log" >&2
+fi
 # The HealthCheck and ClusterHealthCheck are cluster-scoped.
 for f in healthcheck-argobot-live-status.yaml clusterhealthcheck-argobot-live-status.yaml; do
   [ -s "${work}/sveltos/out/manifests/${f}" ] || fail "sveltos: ${f} was not rendered"

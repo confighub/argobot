@@ -19,6 +19,14 @@ spec:
     metadata:
       labels:
         app: argobot
+      # Ask Prometheus to scrape the pod. Only a scrape config whose relabel
+      # rules read prometheus.io/* honours them (the Prometheus Operator does
+      # not). No prometheus.io/port: the target's port is then the metrics
+      # containerPort, so the port is written in one place in this manifest.
+      # The metrics input set to false removes them with that port.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
     spec:
       serviceAccountName: argobot
       # Meets the Pod Security Standards "restricted" level. The image runs as

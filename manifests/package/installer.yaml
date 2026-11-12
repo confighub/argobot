@@ -107,7 +107,7 @@ spec:
             - "METRICS_ENABLED={{ .Inputs.metrics }}"
     - toolchain: Kubernetes/YAML
       whereResource: "ConfigHub.ResourceType = 'apps/v1/Deployment'"
-      description: With metrics off, expose no metrics port.
+      description: With metrics off, expose no metrics port and ask for no scraping.
       invocations:
         - name: set-yq
           args:
@@ -115,7 +115,9 @@ spec:
               with(select($params.metrics == "false");
               .spec.template.spec.containers[] |= (select(.name == "argobot") |= (
               .ports |= map(select(.name != "metrics")) |
-              select((.ports | length) == 0) |= del(.ports))))
+              select((.ports | length) == 0) |= del(.ports))) |
+              .spec.template.metadata.annotations |= with_entries(select(.key | test("^prometheus\.io/") | not)) |
+              del(select((.spec.template.metadata.annotations | length) == 0) | .spec.template.metadata.annotations))
             - "metrics={{ .Inputs.metrics }}"
 
   validators:

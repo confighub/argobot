@@ -47,7 +47,7 @@ argobot records its counters with OpenTelemetry and serves them in the Prometheu
 
 A call that fails because argobot is shutting down is not counted as a failure. Every series is exported from the start, at zero, and the counters restart from zero with each process. `/metrics` holds only these counters: no Go runtime or process metrics, and no OpenTelemetry `target_info`, so the `OTEL_*` resource environment variables have no effect. Serving them is best-effort: if the address cannot be opened, argobot warns and goes on without metrics.
 
-The manifests name the container port `metrics` and set it to 9090. If you change the port in `METRICS_ADDR`, change `containerPort` to match. Set `METRICS_ENABLED=false` to turn metrics off. They include no Service, ServiceMonitor or scrape annotations; add whichever your Prometheus uses to discover targets.
+The manifests name the container port `metrics` and set it to 9090. If you change the port in `METRICS_ADDR`, change `containerPort` to match. Set `METRICS_ENABLED=false` to turn metrics off. The plain manifests include no Service, ServiceMonitor or scrape annotations; add whichever your Prometheus uses to discover targets. The [installer package](manifests/package/README.md) adds the `prometheus.io/scrape` and `prometheus.io/path` pod annotations, which only a scrape config that reads `prometheus.io/*` honours (the Prometheus Operator needs a PodMonitor instead); with no `prometheus.io/port`, the target's port is the `metrics` containerPort.
 
 ### Sveltos
 
