@@ -6,6 +6,7 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - clusterrole-read.yaml
+  - role-read.yaml
   - deployment.yaml
 # Override with installer setup --set-image ghcr.io/confighub/argobot=<image>.
 images:
