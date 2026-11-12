@@ -36,13 +36,13 @@ func TestProjectStatus(t *testing.T) {
 	if got.DataSource != "orders-prod" {
 		t.Errorf("DataSource = %q, want orders-prod", got.DataSource)
 	}
-	if got.Sync != goclientnew.Synced || got.ReporterSync != "Synced" {
+	if got.Sync != goclientnew.ReleaseLiveStatusSyncSynced || got.ReporterSync != "Synced" {
 		t.Errorf("sync fields wrong: %+v", got)
 	}
 	if got.Health != goclientnew.ReleaseLiveStatusHealthHealthy || got.ReporterHealth != "Healthy" {
 		t.Errorf("health fields wrong: %+v", got)
 	}
-	if got.Operation != goclientnew.ReleaseLiveStatusOperationSucceeded || got.ReporterOperation != "Succeeded" {
+	if got.Operation != goclientnew.Succeeded || got.ReporterOperation != "Succeeded" {
 		t.Errorf("operation fields wrong: %+v", got)
 	}
 	// Health message is preferred over the operation message.
@@ -66,7 +66,7 @@ func TestProjectStatusFallsBackToOperationMessage(t *testing.T) {
 		t.Errorf("Message = %q, want operation message fallback", got.Message)
 	}
 	// Argo's Error is a failed operation, and its own word is kept.
-	if got.Operation != goclientnew.ReleaseLiveStatusOperationFailed || got.ReporterOperation != "Error" {
+	if got.Operation != goclientnew.Failed || got.ReporterOperation != "Error" {
 		t.Errorf("operation fields wrong: %+v", got)
 	}
 }
@@ -79,7 +79,7 @@ func TestProjectStatusMissingFields(t *testing.T) {
 	if got.Reporter != liveStatusReporter || got.DataSource != "fresh" {
 		t.Errorf("identity fields wrong: %+v", got)
 	}
-	if got.Sync != goclientnew.Unknown || got.Health != goclientnew.ReleaseLiveStatusHealthUnknown ||
+	if got.Sync != goclientnew.ReleaseLiveStatusSyncUnknown || got.Health != goclientnew.ReleaseLiveStatusHealthUnknown ||
 		got.Operation != "" || got.Message != "" {
 		t.Errorf("expected unknown status, got %+v", got)
 	}

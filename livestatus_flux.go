@@ -53,9 +53,9 @@ func fluxApplied(c fluxConditions) bool {
 // fromFluxRunning is the status of the Release the cluster runs, the one the
 // Kustomization last attempted.
 func fromFluxRunning(c fluxConditions) goclientnew.ReleaseLiveStatus {
-	sync := goclientnew.Unknown
+	sync := goclientnew.ReleaseLiveStatusSyncUnknown
 	if fluxApplied(c) {
-		sync = goclientnew.Synced
+		sync = goclientnew.ReleaseLiveStatusSyncSynced
 	}
 	return goclientnew.ReleaseLiveStatus{
 		Sync:              sync,
@@ -83,9 +83,9 @@ func fromFluxSuperseded(c fluxConditions) goclientnew.ReleaseLiveStatus {
 		health = goclientnew.ReleaseLiveStatusHealthHealthy
 	}
 	return goclientnew.ReleaseLiveStatus{
-		Sync:           goclientnew.Synced,
+		Sync:           goclientnew.ReleaseLiveStatusSyncSynced,
 		Health:         health,
-		Operation:      goclientnew.ReleaseLiveStatusOperationSucceeded,
+		Operation:      goclientnew.Succeeded,
 		ReporterHealth: c.HealthyReason,
 	}
 }
@@ -97,12 +97,12 @@ func fromFluxAttempted(c fluxConditions) goclientnew.ReleaseLiveStatus {
 	var operation goclientnew.ReleaseLiveStatusOperation
 	switch {
 	case c.Stalled == "True", c.Ready == "False":
-		operation = goclientnew.ReleaseLiveStatusOperationFailed
+		operation = goclientnew.Failed
 	case c.Reconciling == "True", c.Ready == "Unknown":
-		operation = goclientnew.ReleaseLiveStatusOperationRunning
+		operation = goclientnew.Running
 	}
 	return goclientnew.ReleaseLiveStatus{
-		Sync:              goclientnew.OutOfSync,
+		Sync:              goclientnew.ReleaseLiveStatusSyncOutOfSync,
 		Health:            goclientnew.ReleaseLiveStatusHealthUnknown,
 		Operation:         operation,
 		ReporterSync:      c.ReadyReason,
@@ -114,9 +114,9 @@ func fromFluxAttempted(c fluxConditions) goclientnew.ReleaseLiveStatus {
 // pull, with the reason of the repository's Ready condition.
 func fromFluxSourceFailed(reason string) goclientnew.ReleaseLiveStatus {
 	return goclientnew.ReleaseLiveStatus{
-		Sync:              goclientnew.OutOfSync,
+		Sync:              goclientnew.ReleaseLiveStatusSyncOutOfSync,
 		Health:            goclientnew.ReleaseLiveStatusHealthUnknown,
-		Operation:         goclientnew.ReleaseLiveStatusOperationFailed,
+		Operation:         goclientnew.Failed,
 		ReporterSync:      reason,
 		ReporterOperation: reason,
 	}
@@ -126,7 +126,7 @@ func fromFluxSourceFailed(reason string) goclientnew.ReleaseLiveStatus {
 // attempts: another has replaced it.
 func fromFluxReplaced() goclientnew.ReleaseLiveStatus {
 	return goclientnew.ReleaseLiveStatus{
-		Sync:   goclientnew.OutOfSync,
+		Sync:   goclientnew.ReleaseLiveStatusSyncOutOfSync,
 		Health: goclientnew.ReleaseLiveStatusHealthUnknown,
 	}
 }
@@ -156,11 +156,11 @@ func fluxHealth(c fluxConditions) goclientnew.ReleaseLiveStatusHealth {
 func fluxOperation(c fluxConditions) goclientnew.ReleaseLiveStatusOperation {
 	switch {
 	case c.Stalled == "True", c.Ready == "False":
-		return goclientnew.ReleaseLiveStatusOperationFailed
+		return goclientnew.Failed
 	case c.Reconciling == "True":
-		return goclientnew.ReleaseLiveStatusOperationRunning
+		return goclientnew.Running
 	case c.Ready == "True":
-		return goclientnew.ReleaseLiveStatusOperationSucceeded
+		return goclientnew.Succeeded
 	}
 	return ""
 }

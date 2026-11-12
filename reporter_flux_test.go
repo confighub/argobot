@@ -146,22 +146,22 @@ func TestFromFluxRunning(t *testing.T) {
 	}{
 		{"applied and healthy",
 			fluxConditions{Ready: "True", ReadyReason: "ReconciliationSucceeded", Healthy: "True", HealthyReason: "Succeeded", HealthChecked: true},
-			goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.ReleaseLiveStatusOperationSucceeded},
+			goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.Succeeded},
 		{"ready with no Healthy condition",
 			fluxConditions{Ready: "True", ReadyReason: "ReconciliationSucceeded", HealthChecked: true},
-			goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.ReleaseLiveStatusOperationSucceeded},
+			goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.Succeeded},
 		{"no health check",
 			fluxConditions{Ready: "True", ReadyReason: "ReconciliationSucceeded"},
-			goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthUnknown, goclientnew.ReleaseLiveStatusOperationSucceeded},
+			goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthUnknown, goclientnew.Succeeded},
 		{"running health checks",
 			fluxConditions{Ready: "Unknown", ReadyReason: "Progressing", Healthy: "Unknown", HealthyReason: "Progressing", Reconciling: "True", HealthChecked: true},
-			goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthProgressing, goclientnew.ReleaseLiveStatusOperationRunning},
+			goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthProgressing, goclientnew.Running},
 		{"health check failed, retrying",
 			fluxConditions{Ready: "False", ReadyReason: "HealthCheckFailed", Healthy: "False", HealthyReason: "HealthCheckFailed", Reconciling: "True", HealthChecked: true},
-			goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthDegraded, goclientnew.ReleaseLiveStatusOperationFailed},
+			goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthDegraded, goclientnew.Failed},
 		{"re-apply of the same revision failed",
 			fluxConditions{Ready: "False", ReadyReason: "ReconciliationFailed", Healthy: "True", HealthyReason: "Succeeded", HealthChecked: true},
-			goclientnew.Unknown, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.ReleaseLiveStatusOperationFailed},
+			goclientnew.ReleaseLiveStatusSyncUnknown, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.Failed},
 	}
 	for _, c := range cases {
 		got := fromFluxRunning(c.in)
@@ -185,12 +185,12 @@ func TestPlanFluxWritesFailedApply(t *testing.T) {
 		t.Fatalf("writes = %+v, want Releases 4 and 5", writes)
 	}
 	expectStatus(t, "running Release 4", writes[4],
-		goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.ReleaseLiveStatusOperationSucceeded)
+		goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.Succeeded)
 	if writes[4].Message != "" {
 		t.Errorf("running Release 4 carries the failure: %q", writes[4].Message)
 	}
 	expectStatus(t, "failed Release 5", writes[5],
-		goclientnew.OutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, goclientnew.ReleaseLiveStatusOperationFailed)
+		goclientnew.ReleaseLiveStatusSyncOutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, goclientnew.Failed)
 	if writes[5].Message != "Kustomization/flux-system/fx-app: kustomize build failed: accumulating resources" ||
 		writes[5].ReporterOperation != "BuildFailed" {
 		t.Errorf("failed Release 5 = %+v", writes[5])
@@ -207,9 +207,9 @@ func TestPlanFluxWritesApplyInProgress(t *testing.T) {
 
 	writes := writesByNum(planFluxWrites(source, []*unstructured.Unstructured{k}, publishedReleases(4, 5)))
 	expectStatus(t, "running Release 4", writes[4],
-		goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.ReleaseLiveStatusOperationSucceeded)
+		goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.Succeeded)
 	expectStatus(t, "applying Release 5", writes[5],
-		goclientnew.OutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, goclientnew.ReleaseLiveStatusOperationRunning)
+		goclientnew.ReleaseLiveStatusSyncOutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, goclientnew.Running)
 
 	// Once applied and under health check, the cluster runs Release 5.
 	k = kustomization("fx-app", true, rev(4), rev(5),
@@ -218,12 +218,12 @@ func TestPlanFluxWritesApplyInProgress(t *testing.T) {
 		condition("Healthy", "Unknown", "Progressing", "Running health checks for revision "+rev(5)))
 	releases := publishedReleases(4, 5)
 	releases[0].LiveStatus = &goclientnew.ReleaseLiveStatus{Reporter: liveStatusReporter, DataSource: "Kustomization/flux-system/fx-app",
-		Sync: goclientnew.Synced, Health: goclientnew.ReleaseLiveStatusHealthHealthy}
+		Sync: goclientnew.ReleaseLiveStatusSyncSynced, Health: goclientnew.ReleaseLiveStatusHealthHealthy}
 	writes = writesByNum(planFluxWrites(source, []*unstructured.Unstructured{k}, releases))
 	expectStatus(t, "checking Release 5", writes[5],
-		goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthProgressing, goclientnew.ReleaseLiveStatusOperationRunning)
+		goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthProgressing, goclientnew.Running)
 	expectStatus(t, "replaced Release 4", writes[4],
-		goclientnew.OutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, "")
+		goclientnew.ReleaseLiveStatusSyncOutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, "")
 }
 
 // A failed pull is recorded on the Release latest resolves to.
@@ -238,9 +238,9 @@ func TestPlanFluxWritesFailedPull(t *testing.T) {
 		t.Fatalf("writes = %+v, want Releases 4 and 5", writes)
 	}
 	expectStatus(t, "running Release 4", writes[4],
-		goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.ReleaseLiveStatusOperationSucceeded)
+		goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.Succeeded)
 	expectStatus(t, "unpulled Release 5", writes[5],
-		goclientnew.OutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, goclientnew.ReleaseLiveStatusOperationFailed)
+		goclientnew.ReleaseLiveStatusSyncOutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, goclientnew.Failed)
 	if writes[5].Message != "OCIRepository/flux-system/fx-app: failed to pull artifact: unauthorized" ||
 		writes[5].ReporterOperation != "OCIPullFailed" || writes[5].DataSource != "OCIRepository/flux-system/fx-app" {
 		t.Errorf("unpulled Release 5 = %+v", writes[5])
@@ -254,7 +254,7 @@ func TestPlanFluxWritesFailedPull(t *testing.T) {
 		t.Fatalf("writes = %+v, want Release 5 only", writes)
 	}
 	expectStatus(t, "running Release 5", writes[5],
-		goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.ReleaseLiveStatusOperationSucceeded)
+		goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.Succeeded)
 }
 
 // Releases this repository reported on and no longer runs are marked replaced,
@@ -267,17 +267,17 @@ func TestPlanFluxWritesMarksReplaced(t *testing.T) {
 			Sync: sync, Health: health, Operation: op, Message: message}
 	}
 	healthy := func(dataSource string) *goclientnew.ReleaseLiveStatus {
-		return status(dataSource, goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.ReleaseLiveStatusOperationSucceeded, "")
+		return status(dataSource, goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.Succeeded, "")
 	}
 	releases := []goclientnew.Release{
 		fluxRelease(1, true, healthy("flux-system/fx-app")), // named before kinds were
 		fluxRelease(2, true, nil),                           // replaced before anything reported on it
-		fluxRelease(3, true, status("Kustomization/flux-system/fx-app", goclientnew.OutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, "", "Replaced by release 4")),
-		fluxRelease(4, true, status("Kustomization/flux-system/fx-app", goclientnew.OutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, goclientnew.ReleaseLiveStatusOperationFailed, "build failed")),
+		fluxRelease(3, true, status("Kustomization/flux-system/fx-app", goclientnew.ReleaseLiveStatusSyncOutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, "", "Replaced by release 4")),
+		fluxRelease(4, true, status("Kustomization/flux-system/fx-app", goclientnew.ReleaseLiveStatusSyncOutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, goclientnew.Failed, "build failed")),
 		fluxRelease(5, true, healthy("Kustomization/other-cluster/fx-app")), // another reporter's
 		fluxRelease(6, true, nil),
-		fluxRelease(7, true, status("Kustomization/flux-system/fx-app", goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthDegraded, goclientnew.ReleaseLiveStatusOperationFailed, "health check failed")),
-		fluxRelease(8, true, status("flux-system/fx-app", goclientnew.OutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, "", "Replaced by release 4")),
+		fluxRelease(7, true, status("Kustomization/flux-system/fx-app", goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthDegraded, goclientnew.Failed, "health check failed")),
+		fluxRelease(8, true, status("flux-system/fx-app", goclientnew.ReleaseLiveStatusSyncOutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, "", "Replaced by release 4")),
 		fluxRelease(9, true, nil), // newer than the one running
 	}
 	releases[4].LiveStatus.Reporter = "someone-else"
@@ -295,8 +295,8 @@ func TestPlanFluxWritesMarksReplaced(t *testing.T) {
 	}{
 		{1, "", "", "Replaced by release 6"},
 		{2, "", "", "Replaced by release 6"},
-		{4, goclientnew.ReleaseLiveStatusOperationFailed, "BuildFailed", "Replaced by release 6, after it failed: build failed"},
-		{7, goclientnew.ReleaseLiveStatusOperationFailed, "HealthCheckFailed", "Replaced by release 6, after it failed: health check failed"},
+		{4, goclientnew.Failed, "BuildFailed", "Replaced by release 6, after it failed: build failed"},
+		{7, goclientnew.Failed, "HealthCheckFailed", "Replaced by release 6, after it failed: health check failed"},
 	}
 	for _, c := range cases {
 		got, ok := byNum[c.n]
@@ -304,7 +304,7 @@ func TestPlanFluxWritesMarksReplaced(t *testing.T) {
 			t.Errorf("Release %d was not marked replaced", c.n)
 			continue
 		}
-		expectStatus(t, fmt.Sprintf("Release %d", c.n), got, goclientnew.OutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, c.op)
+		expectStatus(t, fmt.Sprintf("Release %d", c.n), got, goclientnew.ReleaseLiveStatusSyncOutOfSync, goclientnew.ReleaseLiveStatusHealthUnknown, c.op)
 		if got.Message != c.msg || got.ReporterOperation != c.reporterOp || got.DataSource != "Kustomization/flux-system/fx-app" ||
 			got.Reporter != liveStatusReporter {
 			t.Errorf("Release %d = %+v", c.n, got)
@@ -323,7 +323,7 @@ func TestPlanFluxWritesMarksReplaced(t *testing.T) {
 		t.Error("Release 9 is newer than the running Release and must not be marked replaced")
 	}
 	expectStatus(t, "running Release 6", byNum[6],
-		goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.ReleaseLiveStatusOperationSucceeded)
+		goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.Succeeded)
 	for i := 1; i < len(writes); i++ {
 		if writes[i-1].Release.ReleaseNum > writes[i].Release.ReleaseNum {
 			t.Errorf("writes not in ReleaseNum order: %d before %d", writes[i-1].Release.ReleaseNum, writes[i].Release.ReleaseNum)
@@ -358,7 +358,7 @@ func TestPlanFluxWritesCombinesKustomizations(t *testing.T) {
 	}
 	got := writes[5]
 	expectStatus(t, "Release 5", got,
-		goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthDegraded, goclientnew.ReleaseLiveStatusOperationFailed)
+		goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthDegraded, goclientnew.Failed)
 	if got.ReporterHealth != "HealthCheckFailed" {
 		t.Errorf("ReporterHealth = %q, want the failing Kustomization's reason", got.ReporterHealth)
 	}

@@ -271,11 +271,11 @@ func TestFromSveltos(t *testing.T) {
 		h               goclientnew.ReleaseLiveStatusHealth
 		op              goclientnew.ReleaseLiveStatusOperation
 	}{
-		{"Provisioned", "Healthy", goclientnew.Synced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.ReleaseLiveStatusOperationSucceeded},
-		{"Provisioning", "Progressing", goclientnew.Unknown, goclientnew.ReleaseLiveStatusHealthProgressing, goclientnew.ReleaseLiveStatusOperationRunning},
-		{"Failed", "Degraded", goclientnew.Unknown, goclientnew.ReleaseLiveStatusHealthDegraded, goclientnew.ReleaseLiveStatusOperationFailed},
-		{"FailedNonRetriable", "Suspended", goclientnew.Unknown, goclientnew.ReleaseLiveStatusHealthSuspended, goclientnew.ReleaseLiveStatusOperationFailed},
-		{"", "", goclientnew.Unknown, goclientnew.ReleaseLiveStatusHealthUnknown, ""},
+		{"Provisioned", "Healthy", goclientnew.ReleaseLiveStatusSyncSynced, goclientnew.ReleaseLiveStatusHealthHealthy, goclientnew.Succeeded},
+		{"Provisioning", "Progressing", goclientnew.ReleaseLiveStatusSyncUnknown, goclientnew.ReleaseLiveStatusHealthProgressing, goclientnew.Running},
+		{"Failed", "Degraded", goclientnew.ReleaseLiveStatusSyncUnknown, goclientnew.ReleaseLiveStatusHealthDegraded, goclientnew.Failed},
+		{"FailedNonRetriable", "Suspended", goclientnew.ReleaseLiveStatusSyncUnknown, goclientnew.ReleaseLiveStatusHealthSuspended, goclientnew.Failed},
+		{"", "", goclientnew.ReleaseLiveStatusSyncUnknown, goclientnew.ReleaseLiveStatusHealthUnknown, ""},
 	}
 	for _, c := range cases {
 		got := fromSveltos(c.feature, c.health)

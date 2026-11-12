@@ -41,7 +41,7 @@ SUMMARY (module — license type — source)
   github.com/modern-go/reflect2                           Apache-2.0   https://github.com/modern-go/reflect2/blob/35a7c28c31ee/LICENSE
   github.com/monochromegane/go-gitignore                  MIT          https://github.com/monochromegane/go-gitignore/blob/205db1a8cc00/LICENSE
   github.com/munnerz/goautoneg                            BSD-3-Clause https://github.com/munnerz/goautoneg/blob/a7dc8b61c822/LICENSE
-  github.com/oapi-codegen/runtime                         Apache-2.0   https://github.com/oapi-codegen/runtime/blob/v1.1.1/LICENSE
+  github.com/oapi-codegen/runtime                         Apache-2.0   https://github.com/oapi-codegen/runtime/blob/v1.8.0/LICENSE
   github.com/pkg/errors                                   BSD-2-Clause https://github.com/pkg/errors/blob/v0.9.1/LICENSE
   github.com/pmezard/go-difflib/difflib                   BSD-3-Clause https://github.com/pmezard/go-difflib/blob/5d4384ee4fb2/LICENSE
   github.com/prometheus/client_golang/internal/github.com/golang/gddo/httputil BSD-3-Clause https://github.com/prometheus/client_golang/blob/v1.25.0/internal/github.com/golang/gddo/LICENSE
@@ -2993,7 +2993,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
 Module:  github.com/oapi-codegen/runtime
 License: Apache-2.0
-Source:  https://github.com/oapi-codegen/runtime/blob/v1.1.1/LICENSE
+Source:  https://github.com/oapi-codegen/runtime/blob/v1.8.0/LICENSE
 --------------------------------------------------------------------------------
 
                                  Apache License

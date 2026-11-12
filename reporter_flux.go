@@ -281,7 +281,7 @@ func planFluxWrites(source *unstructured.Unstructured, kustomizations []*unstruc
 		w := fluxWrite{Release: release, Status: projectFluxStatus(obs)}
 		writes = append(writes, w)
 		written[release.ReleaseID] = true
-		if w.Status.Sync == goclientnew.Synced && (running == nil || release.ReleaseNum > running.Release.ReleaseNum) {
+		if w.Status.Sync == goclientnew.ReleaseLiveStatusSyncSynced && (running == nil || release.ReleaseNum > running.Release.ReleaseNum) {
 			running = &w
 		}
 	}
@@ -345,7 +345,7 @@ func fluxReplacedStatus(was goclientnew.ReleaseLiveStatus, replacement int64) go
 	status.Reporter = liveStatusReporter
 	status.DataSource = was.DataSource
 	status.Message = fmt.Sprintf("%s %d", fluxReplacedMessage, replacement)
-	if was.Operation == goclientnew.ReleaseLiveStatusOperationFailed {
+	if was.Operation == goclientnew.Failed {
 		status.Operation = was.Operation
 		status.ReporterOperation = was.ReporterOperation
 		if was.Message != "" {
@@ -357,7 +357,7 @@ func fluxReplacedStatus(was goclientnew.ReleaseLiveStatus, replacement int64) go
 
 // fluxMarkedReplaced says a status is one planFluxWrites marked replaced.
 func fluxMarkedReplaced(ls *goclientnew.ReleaseLiveStatus) bool {
-	return ls.Sync == goclientnew.OutOfSync && strings.HasPrefix(ls.Message, fluxReplacedMessage+" ")
+	return ls.Sync == goclientnew.ReleaseLiveStatusSyncOutOfSync && strings.HasPrefix(ls.Message, fluxReplacedMessage+" ")
 }
 
 // fluxDataSource rewrites a DataSource in the form this version writes. Earlier
@@ -555,9 +555,9 @@ func readCondition(u *unstructured.Unstructured, typ string) fluxCondition {
 func projectFluxStatus(observations []fluxObservation) goclientnew.ReleaseLiveStatus {
 	syncRank := func(s goclientnew.ReleaseLiveStatusSync) int {
 		switch s {
-		case goclientnew.Synced:
+		case goclientnew.ReleaseLiveStatusSyncSynced:
 			return 0
-		case goclientnew.OutOfSync:
+		case goclientnew.ReleaseLiveStatusSyncOutOfSync:
 			return 2
 		}
 		return 1
@@ -577,11 +577,11 @@ func projectFluxStatus(observations []fluxObservation) goclientnew.ReleaseLiveSt
 	}
 	operationRank := func(o goclientnew.ReleaseLiveStatusOperation) int {
 		switch o {
-		case goclientnew.ReleaseLiveStatusOperationSucceeded:
+		case goclientnew.Succeeded:
 			return 0
-		case goclientnew.ReleaseLiveStatusOperationRunning:
+		case goclientnew.Running:
 			return 2
-		case goclientnew.ReleaseLiveStatusOperationFailed:
+		case goclientnew.Failed:
 			return 3
 		}
 		return 1
