@@ -56,6 +56,7 @@ Add `--select flux` or `--select sveltos` for those controllers.
 | `channel` | `confighubplaceholder` | The Channel argobot claims, as `<space>/<slug>`. |
 | `target` | `confighubplaceholder` | The Target that stands for the cluster, as `<space>/<slug>`. argobot stores the cluster's facts on it. |
 | `confighub_url` | `https://hub.confighub.com` | The ConfigHub URL as the cluster reaches it. |
+| `metrics` | `true` | Whether argobot serves Prometheus metrics. `false` sets `METRICS_ENABLED=false` and drops the Deployment's `metrics` port. |
 
 To run another image, such as a mirror's copy, pass `--set-image ghcr.io/confighub/argobot=<registry>/argobot:<tag>`.
 

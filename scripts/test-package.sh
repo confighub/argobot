@@ -126,6 +126,14 @@ for case in base:argobot.yaml flux-base:flux/argobot.yaml sveltos-base:sveltos/a
     fail "${case%%:*}: the environment differs from manifests/${case#*:}"
   fi
 done
+# Metrics are on unless the metrics input turns them off.
+[ "$(env_of base METRICS_ENABLED)" = true ] || fail "base: METRICS_ENABLED is $(env_of base METRICS_ENABLED), want true"
+expect_render no-metrics argocd --input metrics=false
+[ "$(env_of no-metrics METRICS_ENABLED)" = false ] || fail "no-metrics: METRICS_ENABLED is $(env_of no-metrics METRICS_ENABLED), want false"
+ports="$(yq -o json -I 0 '.spec.template.spec.containers[0].ports' "${work}/no-metrics/out/manifests/deployment-argobot-argobot.yaml")"
+[ "$ports" = null ] || fail "no-metrics: ports are ${ports}, want none"
+ports="$(yq -r '.spec.template.spec.containers[0].ports[].name' "${work}/base/out/manifests/deployment-argobot-argobot.yaml")"
+[ "$ports" = metrics ] || fail "base: ports are ${ports:-none}, want metrics"
 # The HealthCheck and ClusterHealthCheck are cluster-scoped.
 for f in healthcheck-argobot-live-status.yaml clusterhealthcheck-argobot-live-status.yaml; do
   [ -s "${work}/sveltos/out/manifests/${f}" ] || fail "sveltos: ${f} was not rendered"

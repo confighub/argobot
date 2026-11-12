@@ -47,7 +47,7 @@ argobot records its counters with OpenTelemetry and serves them in the Prometheu
 
 A call that fails because argobot is shutting down is not counted as a failure. Every series is exported from the start, at zero, and the counters restart from zero with each process. `/metrics` holds only these counters: no Go runtime or process metrics, and no OpenTelemetry `target_info`, so the `OTEL_*` resource environment variables have no effect. Serving them is best-effort: if the address cannot be opened, argobot warns and goes on without metrics.
 
-The manifests name the container port `metrics` and set it to 9090. If you change the port in `METRICS_ADDR`, change `containerPort` to match. They include no Service, ServiceMonitor or scrape annotations; add whichever your Prometheus uses to discover targets.
+The manifests name the container port `metrics` and set it to 9090. If you change the port in `METRICS_ADDR`, change `containerPort` to match. Set `METRICS_ENABLED=false` to turn metrics off. They include no Service, ServiceMonitor or scrape annotations; add whichever your Prometheus uses to discover targets.
 
 ### Sveltos
 
@@ -98,6 +98,7 @@ All configuration is via environment variables:
 | `ARGO_REFRESH_TYPE` | no | `hard` (default) or `normal`. |
 | `ARGO_APP` | no | The single Argo CD Application every matching event syncs. If unset, the event's Space slug resolves to every Application whose OCI source names that Space, plus the one named after it. |
 | `CONFIGHUB_REPORT_LIVE_STATUS` | no | `false` to disable live-status reporting. On by default; see [Live-status reporting](#live-status-reporting). Needs Kubernetes access. |
+| `METRICS_ENABLED` | no | `false` to turn metrics off: argobot opens no port. On by default. See [Metrics](#metrics). |
 | `METRICS_ADDR` | no | Address to serve Prometheus metrics on, at `/metrics`. Defaults to `:9090`; changing the port means changing the manifests' `containerPort` too. See [Metrics](#metrics). |
 
 An empty variable is the same as an unset one. `argobot docgen env` prints these variables as a JSON Schema, with each one's description, default and allowed values.

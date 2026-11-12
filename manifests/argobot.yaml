@@ -228,6 +228,9 @@ spec:
             # and live-status report counts by result. Defaults to ":9090". If
             # you change the port, change containerPort below to match. No
             # Service or scrape annotations are included; add your own.
+            # "false" turns metrics off: argobot opens no port.
+            - name: METRICS_ENABLED
+              value: "true"
             # - name: METRICS_ADDR
             #   value: ":9090"
           ports:

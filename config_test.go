@@ -21,6 +21,7 @@ func setBaseEnv(t *testing.T) {
 		"GITOPS_CONTROLLER", "ARGO_SYNC_MODE", "ARGOCD_SERVER", "ARGOCD_AUTH_TOKEN",
 		"ARGO_NAMESPACE", "ARGO_REFRESH_TYPE", "ARGO_APP", "FLUX_NAMESPACE",
 		"ARGOCD_INSECURE", "ARGO_APP_NAMESPACE", "ARGO_PRUNE", "ARGO_FORCE",
+		"METRICS_ENABLED",
 	} {
 		t.Setenv(k, "")
 	}
@@ -41,6 +42,21 @@ func TestLoadConfigModes(t *testing.T) {
 		}
 		if cfg.ArgoRefreshType != "hard" {
 			t.Errorf("ArgoRefreshType = %q, want %q", cfg.ArgoRefreshType, "hard")
+		}
+		if !cfg.MetricsEnabled {
+			t.Errorf("MetricsEnabled = false, want metrics on by default")
+		}
+	})
+
+	t.Run("METRICS_ENABLED=false disables metrics", func(t *testing.T) {
+		setBaseEnv(t)
+		t.Setenv("METRICS_ENABLED", "false")
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("loadConfig() error = %v", err)
+		}
+		if cfg.MetricsEnabled {
+			t.Errorf("MetricsEnabled = true, want false")
 		}
 	})
 
