@@ -30,9 +30,9 @@ func fromSveltos(featureStatus, healthStatus string) goclientnew.ReleaseLiveStat
 // profile's content is deployed. Nothing else says whether it is.
 func sveltosSync(status string) goclientnew.ReleaseLiveStatusSync {
 	if status == "Provisioned" {
-		return goclientnew.Synced
+		return goclientnew.ReleaseLiveStatusSyncSynced
 	}
-	return goclientnew.Unknown
+	return goclientnew.ReleaseLiveStatusSyncUnknown
 }
 
 // sveltosHealth maps a HealthCheckReport's healthStatus, whose values are a
@@ -58,11 +58,11 @@ func sveltosHealth(status string) goclientnew.ReleaseLiveStatusHealth {
 func sveltosOperation(status string) goclientnew.ReleaseLiveStatusOperation {
 	switch status {
 	case "Provisioning":
-		return goclientnew.ReleaseLiveStatusOperationRunning
+		return goclientnew.Running
 	case "Provisioned":
-		return goclientnew.ReleaseLiveStatusOperationSucceeded
+		return goclientnew.Succeeded
 	case "Failed", "FailedNonRetriable":
-		return goclientnew.ReleaseLiveStatusOperationFailed
+		return goclientnew.Failed
 	}
 	return ""
 }

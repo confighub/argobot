@@ -139,6 +139,36 @@ subjects:
     name: argobot
     namespace: argobot
 ---
+# Cluster facts: on a cluster running the Amazon VPC CNI, whether it enforces
+# NetworkPolicy is set in its amazon-vpc-cni ConfigMap, so argobot gets that
+# one ConfigMap and no other. Without this grant, the
+# Cluster.NetworkPolicyEnforcer fact is left out on such clusters; elsewhere
+# the Role is unused.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argobot-read
+  namespace: kube-system
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["amazon-vpc-cni"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argobot-read
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argobot-read
+subjects:
+  - kind: ServiceAccount
+    name: argobot
+    namespace: argobot
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
