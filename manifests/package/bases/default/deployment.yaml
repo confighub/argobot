@@ -55,6 +55,9 @@ spec:
             # <space>/<slug>. The target input sets it.
             - name: CONFIGHUB_TARGET
               value: confighubplaceholder
+            # Whether argobot serves metrics. The metrics input sets it.
+            - name: METRICS_ENABLED
+              value: "true"
           # Prometheus metrics at /metrics (METRICS_ADDR, by default :9090).
           # Setting METRICS_ADDR to another port needs containerPort changed too.
           ports:

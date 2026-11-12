@@ -25,6 +25,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -70,8 +71,14 @@ func main() {
 
 	// Concurrency one: argobot runs no commands, and events are handled in
 	// delivery order on the poll goroutine regardless.
-	// Set up the counters before anything that counts starts.
-	metricsHandler := setupMetrics(cfg.Controller)
+	// Set up the counters before anything that counts starts. Disabled, they
+	// stay no-ops and no port is opened.
+	var metricsHandler http.Handler
+	if cfg.MetricsEnabled {
+		metricsHandler = setupMetrics(cfg.Controller)
+	} else {
+		log.Printf("[INFO] metrics disabled (METRICS_ENABLED=false)")
+	}
 
 	listener := channel.NewListener(hub, cubapi.ParseRef(cfg.Channel), channel.Options{Concurrency: 1}).
 		OnEvent(makeEventHandler(syncer, cfg))

@@ -71,6 +71,11 @@ type config struct {
 	// skipped with a warning rather than failing the bot.
 	ReportLiveStatus bool
 
+	// MetricsEnabled turns the Prometheus metrics server on (the default). Set
+	// METRICS_ENABLED=false and argobot opens no metrics port and its counters
+	// stay no-ops.
+	MetricsEnabled bool
+
 	// MetricsAddr is the address argobot serves its Prometheus metrics on, at
 	// /metrics (defaults to ":9090").
 	MetricsAddr string
@@ -110,6 +115,7 @@ type envVars struct {
 	ArgoRefreshType  string `env:"ARGO_REFRESH_TYPE" json:"ARGO_REFRESH_TYPE" default:"hard" enum:"hard,normal" description:"Argo CD only: refresh to request. hard re-resolves the source, including an OCI tag's digest."`
 	ArgoApp          string `env:"ARGO_APP" json:"ARGO_APP" description:"Argo CD only: the one Application every event syncs. Unset, the event's Space names the Applications to sync."`
 	ReportLiveStatus string `env:"CONFIGHUB_REPORT_LIVE_STATUS" json:"CONFIGHUB_REPORT_LIVE_STATUS" default:"true" enum:"true,false" description:"Whether argobot writes the status of what the controller deployed to each Release's LiveStatus."`
+	MetricsEnabled   string `env:"METRICS_ENABLED" json:"METRICS_ENABLED" default:"true" enum:"true,false" description:"Whether argobot serves Prometheus metrics. false opens no metrics port."`
 	MetricsAddr      string `env:"METRICS_ADDR" json:"METRICS_ADDR" default:":9090" description:"Address argobot serves Prometheus metrics on, at /metrics: sync, unresolved event and live-status report counts."`
 }
 
@@ -129,6 +135,7 @@ func loadConfig() (config, error) {
 		ArgoRefreshType:  env.ArgoRefreshType,
 		ArgoApp:          env.ArgoApp,
 		ReportLiveStatus: env.ReportLiveStatus != "false",
+		MetricsEnabled:   env.MetricsEnabled != "false",
 		MetricsAddr:      env.MetricsAddr,
 	}
 	if cfg.Controller == "" {
