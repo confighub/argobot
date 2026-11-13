@@ -24,10 +24,10 @@ github.com/cockroachdb/logtags v0.0.0-20230118201751-21c54148d20b h1:r6VH0faHjZe
 github.com/cockroachdb/logtags v0.0.0-20230118201751-21c54148d20b/go.mod h1:Vz9DsVWQQhf3vs21MhPMZpMGSht7O/2vFW2xusFUVOs=
 github.com/cockroachdb/redact v1.1.5 h1:u1PMllDkdFfPWaNGMyLD1+so+aq3uUItthCFqzwPJ30=
 github.com/cockroachdb/redact v1.1.5/go.mod h1:BVNblN9mBWFyMyqK1k3AAiSxhvhfK2oOZZ2lK+dpvRg=
-github.com/confighub/sdk/core v0.11.0 h1:yCuvEb3ri4bbtHSrcRUSE+eZe+BFsRbEMDnHBk3mATQ=
-github.com/confighub/sdk/core v0.11.0/go.mod h1:halZhXy+45LAF/0XtQqKtcIp99HuDusWMuSXw467iZc=
-github.com/confighub/sdk/k8sutil v0.11.0 h1:59KJEzM5BherxotCjr+E7/yp04LtkBI1mCPFGmQdDgk=
-github.com/confighub/sdk/k8sutil v0.11.0/go.mod h1:Ea0xg6AA+uPJPc5u7d8Bs7y+n1V1J4IQ6SFR0iUxZ3Y=
+github.com/confighub/sdk/core v0.11.1 h1:7lPcOMlOyjUHIYY6n+cZMOVBzyk0Li4hfKKlCn8v6qQ=
+github.com/confighub/sdk/core v0.11.1/go.mod h1:halZhXy+45LAF/0XtQqKtcIp99HuDusWMuSXw467iZc=
+github.com/confighub/sdk/k8sutil v0.11.1 h1:K57ztZMvhW6TMRRRWwSVNJf8/XK2bC/ZYtlEu1QF3jY=
+github.com/confighub/sdk/k8sutil v0.11.1/go.mod h1:uZeZAvB7XywJkF/9PuhbFgnt78kVFBSVLgqHHNiBDCo=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
