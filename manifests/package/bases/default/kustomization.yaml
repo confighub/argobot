@@ -12,4 +12,4 @@ resources:
 images:
   - name: ghcr.io/confighub/argobot
     newName: ghcr.io/confighub/argobot
-    newTag: v0.2.9
+    newTag: v0.2.12
