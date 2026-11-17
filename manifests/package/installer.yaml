@@ -6,7 +6,7 @@ metadata:
   name: argobot
 installerMetadata:
   # The argobot release the package runs; release.yml sets it.
-  version: 0.2.9
+  version: 0.2.12
   # componentGroups and vet-pod-security-standard.
   installerVersion: ">= 0.3.0"
 spec:
@@ -112,12 +112,7 @@ spec:
         - name: set-yq
           args:
             - >-
-              with(select($params.metrics == "false");
-              .spec.template.spec.containers[] |= (select(.name == "argobot") |= (
-              .ports |= map(select(.name != "metrics")) |
-              select((.ports | length) == 0) |= del(.ports))) |
-              .spec.template.metadata.annotations |= with_entries(select(.key | test("^prometheus\.io/") | not)) |
-              del(select((.spec.template.metadata.annotations | length) == 0) | .spec.template.metadata.annotations))
+              with(select($params.metrics == "false"); .spec.template.spec.containers[] |= (select(.name == "argobot") |= ( .ports |= map(select(.name != "metrics")) | select((.ports | length) == 0) |= del(.ports))) | .spec.template.metadata.annotations |= with_entries(select(.key | test("^prometheus\.io/") | not)) | del(select((.spec.template.metadata.annotations | length) == 0) | .spec.template.metadata.annotations))
             - "metrics={{ .Inputs.metrics }}"
 
   validators:
