@@ -101,7 +101,7 @@ All configuration is via environment variables:
 | `METRICS_ENABLED` | no | `false` to turn metrics off: argobot opens no port. On by default. See [Metrics](#metrics). |
 | `METRICS_ADDR` | no | Address to serve Prometheus metrics on, at `/metrics`. Defaults to `:9090`; changing the port means changing the manifests' `containerPort` too. See [Metrics](#metrics). |
 
-An empty variable is the same as an unset one. `argobot docgen env` prints these variables as a JSON Schema, with each one's description, default and allowed values.
+An empty variable is the same as an unset one. `argobot docgen env` prints these variables as a JSON Schema, with each one's description, default and allowed values; the installer package validates argobot's environment against it.
 
 When `GITOPS_CONTROLLER` is unset, argobot drives Argo CD. It needs no Argo CD credentials: it uses the in-cluster ServiceAccount (or a local kubeconfig when run out of cluster).
 
