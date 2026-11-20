@@ -1,5 +1,7 @@
 # argobot
 
+> **argobot is now [k8sbot](https://github.com/confighub/k8sbot).** New installs use k8sbot, and `cub cluster` installs it since cub v0.11.11. Existing argobot installs keep running, and the image `ghcr.io/confighub/argobot` and bundle `ghcr.io/confighub/configs/argobot` stay published.
+
 A ConfigHub bot that syncs Argo CD applications, Sveltos profiles, or Flux OCI sources.
 
 argobot listens on a ConfigHub Channel that subscribes to ConfigHub's event log. When ConfigHub records that a Release was published, argobot triggers a sync of the corresponding Argo CD Application (or, with `GITOPS_CONTROLLER=sveltos`, a redeploy of the Sveltos profile, see [Sveltos](#sveltos); or with `GITOPS_CONTROLLER=flux`, a reconciliation of the Flux OCIRepository, see [Flux](#flux)), so the change takes effect immediately instead of waiting for the controller's next reconciliation.
